@@ -1,0 +1,4 @@
+secrets.h
+backup/
+build/
+*.bin
