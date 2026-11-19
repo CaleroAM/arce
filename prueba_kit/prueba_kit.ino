@@ -7,8 +7,8 @@
 //        parpadeo rápido continuo = NO encontró ningún módulo
 //   2) Buzzer XN44: al arrancar suena 1 pitido por cada módulo encontrado
 //   3) LED RGB del XN03 (botón BOOT cambia de modo, suena 1/2/3 pitidos):
-//        Modo 1: MORADO fijo
-//        Modo 2: color del pH medido por la sonda (indicador universal)
+//        Modo 1: MORADO fijo  (BOOT para elegirlo)
+//        Modo 2: color del pH medido por la sonda (indicador universal) ← AL ARRANCAR
 //        Modo 3: color según el potenciómetro (gíralo: rojo -> verde -> violeta)
 //   4) Wi-Fi: conecta el celular a la red  "ARCE-prueba"  (clave: arce2026)
 //        y abre  http://192.168.4.1  -> pH, voltaje, ADC, potenciómetro y módulos
@@ -19,6 +19,8 @@
 #include <Wire.h>
 #include <WiFi.h>
 #include <WebServer.h>
+#include <ArduinoOTA.h>
+#include <Update.h>
 #include <math.h>
 
 #define I2C_SDA      12
@@ -30,6 +32,8 @@ const uint8_t ADDR_XN03 = 0x03;   // E/S analógicas: sonda pH en IN1, pot, LED 
 const uint8_t ADDR_XN13 = 0x0D;   // relevador de la bomba
 const uint8_t ADDR_XN44 = 0x2C;   // buzzer
 const uint8_t LED_MAX   = 100;    // subir a 255 si el RGB se ve tenue
+// Calibración ARCE 19-nov: ADC 607 = pH 6.95 (pendiente de fábrica 54.33 ADC/pH)
+const float CAL_ADC7 = 604.3f, CAL_ADC4 = 767.3f;
 
 const char* AP_SSID = "ARCE-prueba";
 const char* AP_PASS = "arce2026";
@@ -38,7 +42,7 @@ WebServer server(80);
 
 bool hay03 = false, hay13 = false, hay44 = false, releOk = false, apOk = false;
 uint8_t nModulos = 0;
-uint8_t modo = 0;                 // 0 morado, 1 pH, 2 potenciómetro
+uint8_t modo = 1;                 // 0 morado, 1 pH (por defecto), 2 potenciómetro
 uint16_t adcPh = 0;
 float voltPh = NAN, ph = NAN;
 int pot = -1;
@@ -81,7 +85,7 @@ void setRGB(uint8_t r, uint8_t g, uint8_t b) {
 
 // ---------------- Indicador universal ----------------
 const uint8_t COLOR_PH[15][3] = {
-  {255, 0, 0},   {230, 20, 20}, {255, 40, 0},  {255, 90, 0},  {255, 140, 0},
+  {255, 0, 0},   {230, 20, 20}, {220, 10, 10}, {255, 90, 0},  {255, 140, 0},
   {255, 200, 0}, {255, 255, 0}, {0, 200, 0},   {0, 180, 120}, {0, 90, 255},
   {0, 0, 180},   {75, 0, 130},  {140, 0, 200}, {148, 0, 211}, {90, 0, 140}
 };
@@ -96,15 +100,51 @@ void colorDePh(float p) {
 }
 
 // ---------------- Pruebas ----------------
+// Identidad de cada módulo: índice 0 = XN03, 1 = XN13, 2 = XN44
+const uint8_t DIRS[3] = { ADDR_XN03, ADDR_XN13, ADDR_XN44 };
+uint8_t whoAmI[3][2], firmware[3][3], estadoMod[3];
+bool infoOk[3] = { false, false, false };
+String busEncontrados = "";                       // todas las direcciones que responden
+uint32_t lecturasOk = 0, lecturasFallo = 0;       // fiabilidad del bus
+uint16_t adcIn2 = 0;                              // salida To (temperatura) de la sonda
+
+// Lectura con "repeated start" (sin STOP entre escribir el registro y leer).
+// Se prueba en el XN13 porque con la lectura normal devuelve siempre 0xFF.
+bool xnReadRS(uint8_t a, uint8_t r, uint8_t* b, size_t n) {
+  Wire.beginTransmission(a); Wire.write(r);
+  if (Wire.endTransmission(false) != 0) return false;
+  if (Wire.requestFrom(a, (uint8_t)n) != n) return false;
+  for (size_t i = 0; i < n; i++) b[i] = Wire.read();
+  return true;
+}
+uint8_t who13rs[2] = {0, 0}, fw13rs[3] = {0, 0, 0}, rele13rs = 0xEE;
+bool rs13Ok = false;
+
+void leerIdentidad(uint8_t i) {
+  infoOk[i] = xnRead(DIRS[i], 0x3E, whoAmI[i], 2) &&
+              xnRead(DIRS[i], 0x38, firmware[i], 3) &&
+              xnRead(DIRS[i], 0x37, &estadoMod[i], 1);
+}
+
 void detectar() {
   hay03 = presente(ADDR_XN03);
   hay13 = presente(ADDR_XN13);
   hay44 = presente(ADDR_XN44);
   nModulos = hay03 + hay13 + hay44;
+  bool hay[3] = { hay03, hay13, hay44 };
+  for (uint8_t i = 0; i < 3; i++) { if (hay[i]) leerIdentidad(i); else infoOk[i] = false; }
+
+  busEncontrados = "";                            // barrido completo 0x01-0x7E
+  for (uint8_t a = 1; a < 0x7F; a++) {
+    if (presente(a)) { char b[6]; snprintf(b, sizeof(b), "0x%02X ", a); busEncontrados += b; }
+  }
+
   releOk = false;
-  if (hay13) {                                    // escribe "apagado" y lo lee de vuelta
+  if (hay13) {                                    // NUNCA enciende: escribe "apagado" y lo lee de vuelta
     uint8_t off = 0x00, leido = 0xFF;
     releOk = xnWrite(ADDR_XN13, 0x01, &off, 1) && xnRead(ADDR_XN13, 0x01, &leido, 1) && leido == 0x00;
+    rs13Ok = xnReadRS(ADDR_XN13, 0x3E, who13rs, 2) && xnReadRS(ADDR_XN13, 0x38, fw13rs, 3) &&
+             xnReadRS(ADDR_XN13, 0x01, &rele13rs, 1);
   }
 }
 
@@ -112,12 +152,14 @@ void medir() {
   if (!hay03) { ph = NAN; voltPh = NAN; pot = -1; return; }
   uint32_t suma = 0; uint8_t n = 0; uint16_t raw;
   for (uint8_t i = 0; i < 16; i++) {              // promedio de 16 lecturas
-    if (xnRead16(ADDR_XN03, 0x21, raw) && raw <= 1023) { suma += raw; n++; }
+    if (xnRead16(ADDR_XN03, 0x21, raw) && raw <= 1023) { suma += raw; n++; lecturasOk++; }
+    else lecturasFallo++;
   }
+  if (xnRead16(ADDR_XN03, 0x22, raw) && raw <= 1023) adcIn2 = raw;
   if (n) {
     adcPh = suma / n;
     voltPh = adcPh * 3.3f / 1023.0f;
-    ph = constrain(7.0f + (adcPh - 511.0f) * (-3.0f) / (674.0f - 511.0f), 0.0f, 14.0f);
+    ph = constrain(7.0f + (adcPh - CAL_ADC7) * (-3.0f) / (CAL_ADC4 - CAL_ADC7), 0.0f, 14.0f);
   } else { ph = NAN; voltPh = NAN; }
   uint8_t p;
   pot = xnRead(ADDR_XN03, 0x10, &p, 1) ? p : -1;
@@ -148,10 +190,33 @@ void paginaInicio() {
   h += "<tr><td>XN03 (pH / pot / RGB) en 0x03</td><td>" + si(hay03) + "</td></tr>";
   h += "<tr><td>XN13 (relevador) en 0x0D</td><td>" + si(hay13) + (hay13 ? (releOk ? " (responde)" : " (no confirma)") : "") + "</td></tr>";
   h += "<tr><td>XN44 (buzzer) en 0x2C</td><td>" + si(hay44) + "</td></tr>";
-  h += "<tr><td>pH (calibración de fábrica)</td><td><b>" + (isnan(ph) ? String("--") : String(ph, 2)) + "</b></td></tr>";
+  h += "<tr><td>pH (calibrado 607 = 6.95)</td><td><b>" + (isnan(ph) ? String("--") : String(ph, 2)) + "</b></td></tr>";
   h += "<tr><td>Voltaje sonda (IN1)</td><td>" + (isnan(voltPh) ? String("--") : String(voltPh, 3) + " V") + "</td></tr>";
-  h += "<tr><td>ADC sonda (0-1023)</td><td>" + String(adcPh) + " <small>(pH 7 ≈ 511, pH 4 ≈ 674)</small></td></tr>";
+  h += "<tr><td>ADC sonda (0-1023)</td><td>" + String(adcPh) + " <small>(calibrado: 607 = pH 6.95)</small></td></tr>";
   h += "<tr><td>Potenciómetro (0-100)</td><td>" + (pot < 0 ? String("--") : String(pot)) + "</td></tr>";
+  h += "<tr><td>ADC IN2 (To, temperatura)</td><td>" + String(adcIn2) + " (" + String(adcIn2 * 3.3f / 1023.0f, 3) + " V)</td></tr>";
+  const char* nom[3] = { "XN03", "XN13", "XN44" };
+  for (uint8_t i = 0; i < 3; i++) {
+    h += "<tr><td>" + String(nom[i]) + " WHO_AM_I / FW / STAT</td><td>";
+    if (infoOk[i]) {
+      char b[48];
+      snprintf(b, sizeof(b), "modelo %u rev %u / %u.%u.%u / 0x%02X", whoAmI[i][0], whoAmI[i][1],
+               firmware[i][0], firmware[i][1], firmware[i][2], estadoMod[i]);
+      h += b;
+    } else h += "--";
+    h += "</td></tr>";
+  }
+  {
+    char b[80];
+    if (rs13Ok) snprintf(b, sizeof(b), "modelo %u rev %u / %u.%u.%u / RELAY=0x%02X", who13rs[0], who13rs[1],
+                         fw13rs[0], fw13rs[1], fw13rs[2], rele13rs);
+    else snprintf(b, sizeof(b), "--");
+    h += "<tr><td>XN13 leído con repeated start</td><td>" + String(b) + "</td></tr>";
+  }
+  h += "<tr><td>Bus I2C (todas las direcciones)</td><td>" + (busEncontrados.length() ? busEncontrados : String("ninguna")) + "</td></tr>";
+  uint32_t tot = lecturasOk + lecturasFallo;
+  h += "<tr><td>Lecturas I2C correctas</td><td>" + String(lecturasOk) + " / " + String(tot) +
+       (tot ? " (" + String(100.0f * lecturasOk / tot, 1) + " %)" : String("")) + "</td></tr>";
   h += "<tr><td>Modo LED</td><td>" + String(NOMBRE_MODO[modo]) + "</td></tr>";
   h += "<tr><td>Tiempo encendido</td><td>" + String(millis() / 1000) + " s</td></tr>";
   h += "</table><p><a href='/modo?m=0'>Morado</a><a href='/modo?m=1'>pH</a><a href='/modo?m=2'>Pot</a><a href='/beep'>Probar buzzer</a></p>";
@@ -162,6 +227,46 @@ void paginaModo() {
   if (server.hasArg("m")) { modo = constrain(server.arg("m").toInt(), 0, 2); actualizarColor(); }
   server.sendHeader("Location", "/"); server.send(303);
 }
+// ---------------- Actualización por HTTP (/update) ----------------
+// Desde el navegador: http://192.168.4.1/update (usuario: arce, clave: arce2026)
+// Desde la terminal:  curl -u arce:arce2026 -F "firmware=@prueba_kit.ino.bin" http://192.168.4.1/update
+const char* OTA_USER = "arce";
+bool otaError = false;
+
+void paginaUpdateForm() {
+  if (!server.authenticate(OTA_USER, AP_PASS)) return server.requestAuthentication();
+  server.send(200, "text/html; charset=utf-8",
+    "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<body style='font-family:sans-serif;margin:16px'><h2>Actualizar firmware</h2>"
+    "<form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<input type='file' name='firmware' accept='.bin'><br><br><input type='submit' value='Subir'></form></body>");
+}
+void paginaUpdateFin() {
+  if (!server.authenticate(OTA_USER, AP_PASS)) return server.requestAuthentication();
+  bool ok = !otaError && !Update.hasError();
+  server.send(ok ? 200 : 500, "text/plain", ok ? "OK, reiniciando\n" : "ERROR en la actualizacion\n");
+  delay(300);
+  if (ok) ESP.restart();
+}
+void paginaUpdateDatos() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    otaError = !server.authenticate(OTA_USER, AP_PASS);
+    if (otaError) return;
+    uint8_t off = 0x00; xnWrite(ADDR_XN13, 0x01, &off, 1);   // relevador apagado durante la actualización
+    setRGB(0, 0, 255);
+    Serial.printf("OTA HTTP: recibiendo %s\n", up.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) otaError = true;
+  } else if (up.status == UPLOAD_FILE_WRITE && !otaError) {
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) otaError = true;
+  } else if (up.status == UPLOAD_FILE_END && !otaError) {
+    if (!Update.end(true)) otaError = true;
+    Serial.printf("OTA HTTP: %u bytes, %s\n", up.totalSize, otaError ? "ERROR" : "OK");
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    Update.abort(); otaError = true;
+  }
+}
+
 void paginaBeep() {
   tono(1320, 200);
   server.sendHeader("Location", "/"); server.send(303);
@@ -187,12 +292,24 @@ void setup() {
   server.on("/", paginaInicio);
   server.on("/modo", paginaModo);
   server.on("/beep", paginaBeep);
+  server.on("/update", HTTP_GET, paginaUpdateForm);
+  server.on("/update", HTTP_POST, paginaUpdateFin, paginaUpdateDatos);
   server.begin();
+
+  // Carga de programas por Wi-Fi (OTA): conectar el portátil a "ARCE-prueba" y subir a 192.168.4.1
+  ArduinoOTA.setHostname("arce-ph");
+  ArduinoOTA.setPassword(AP_PASS);
+  ArduinoOTA.onStart([]() {
+    uint8_t off = 0x00; xnWrite(ADDR_XN13, 0x01, &off, 1);   // relevador apagado durante la actualización
+    setRGB(0, 0, 255);
+  });
+  ArduinoOTA.begin();
 }
 
 void loop() {
   uint32_t ahora = millis();
   server.handleClient();
+  ArduinoOTA.handle();
 
   static uint32_t tDetectar = 0, tMedir = 0, tLog = 0;
   if (ahora - tDetectar >= 3000) {                // vuelve a buscar módulos (por si se conectan después)
@@ -219,8 +336,14 @@ void loop() {
 
   if (ahora - tLog >= 1000) {                     // por si hay monitor serie conectado
     tLog = ahora;
-    Serial.printf("XN03=%d XN13=%d(%d) XN44=%d | adc=%u V=%.3f pH=%.2f pot=%d modo=%u | WiFi AP %s %s clientes=%d\n",
-                  hay03, hay13, releOk, hay44, adcPh, voltPh, ph, pot, modo,
+    Serial.printf("XN03=%d XN13=%d(%d) XN44=%d | bus: %s| adc1=%u V=%.3f pH=%.2f adc2=%u pot=%d | i2c ok=%lu fallo=%lu | modo=%u | WiFi AP %s %s clientes=%d\n",
+                  hay03, hay13, releOk, hay44, busEncontrados.c_str(), adcPh, voltPh, ph, adcIn2, pot,
+                  (unsigned long)lecturasOk, (unsigned long)lecturasFallo, modo,
                   apOk ? "OK" : "FALLO", WiFi.softAPIP().toString().c_str(), WiFi.softAPgetStationNum());
+    if (hay13) Serial.printf("  XN13 repeated start: ok=%d WHO_AM_I=%u.%u FW=%u.%u.%u RELAY=0x%02X\n", rs13Ok,
+                             who13rs[0], who13rs[1], fw13rs[0], fw13rs[1], fw13rs[2], rele13rs);
+    for (uint8_t i = 0; i < 3; i++) if (infoOk[i])
+      Serial.printf("  0x%02X WHO_AM_I=%u.%u FW=%u.%u.%u STAT=0x%02X\n", DIRS[i], whoAmI[i][0], whoAmI[i][1],
+                    firmware[i][0], firmware[i][1], firmware[i][2], estadoMod[i]);
   }
 }

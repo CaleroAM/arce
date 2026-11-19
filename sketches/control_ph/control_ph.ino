@@ -22,7 +22,7 @@
 //
 //  Para Blynk: copia secrets.h.example a secrets.h y descomenta USE_BLYNK.
 // =====================================================================
-//#define USE_BLYNK
+#define USE_BLYNK
 
 #ifdef USE_BLYNK
 #include "secrets.h"
@@ -31,7 +31,16 @@
 #endif
 #include <Wire.h>
 #include <Preferences.h>
+#include <WiFi.h>
+#include <WebServer.h>
+#include <Update.h>
 #include <math.h>
+
+// Red propia del ESP32 (siempre activa, aunque no haya Internet):
+//   estado en http://192.168.4.1  ·  actualizar firmware en http://192.168.4.1/update (arce / arce2026)
+const char* AP_SSID  = "ARCE-prueba";
+const char* AP_PASS  = "arce2026";
+const char* OTA_USER = "arce";
 
 // ---------------- Hardware ----------------
 #define I2C_SDA      12
@@ -50,10 +59,12 @@ const uint8_t REG_TONE     = 0x01;   // XN44
 const uint8_t LED_MAX      = 100;    // subir a 255 si el RGB del XN03 usa 0–255
 
 // ---------------- Calibración pH ----------------
-// Tabla del fabricante (ADC 10 bits, 3.3 V): pH 7 = 511, pH 4 = 674.
+// Tabla del fabricante (ADC 10 bits, 3.3 V): pH 7 = 511, pH 4 = 674 (pendiente 54.33 ADC/pH).
+// Calibración ARCE 19-nov: ADC 607 = pH 6.95 (1 punto, pendiente de fábrica) -> pH 7 = 604.3, pH 4 = 767.3
+const float CAL_ADC7_DEF = 604.3f, CAL_ADC4_DEF = 767.3f;
 // Recalibrar en sitio con "cal7" (agua ≈ 7) y "cal4" (solución pH 4).
-float calAdc7 = 511.0f;
-float calAdc4 = 674.0f;
+float calAdc7 = CAL_ADC7_DEF;
+float calAdc4 = CAL_ADC4_DEF;
 
 // ---------------- Parámetros de control ----------------
 float umbral = 6.0f;
@@ -208,9 +219,11 @@ float pendientePh() {
   return (ahora - antes) / 4.0f;
 }
 
-// ---------------- Indicador universal ----------------
+// ---------------- Indicador universal (tabla del reto) ----------------
+//  0 rojo intenso · 1-2 rojo · 3 rojo-naranja · 4 naranja · 5 amarillo-naranja · 6 amarillo
+//  7 verde · 8 verde azulado · 9 azul · 10 azul oscuro · 11 índigo · 12-13 violeta · 14 violeta oscuro
 const uint8_t COLOR_PH[15][3] = {
-  {255, 0, 0},   {230, 20, 20}, {255, 40, 0},  {255, 90, 0},  {255, 140, 0},
+  {255, 0, 0},   {230, 20, 20}, {220, 10, 10}, {255, 90, 0},  {255, 140, 0},
   {255, 200, 0}, {255, 255, 0}, {0, 200, 0},   {0, 180, 120}, {0, 90, 255},
   {0, 0, 180},   {75, 0, 130},  {140, 0, 200}, {148, 0, 211}, {90, 0, 140}
 };
@@ -358,7 +371,7 @@ void procesarComando(String c) {
   }
   else if (c == "cal7" && !isnan(adcFiltrado)) { calAdc7 = adcFiltrado; guardarPrefs(); Serial.printf("# cal7 = %.1f\n", calAdc7); }
   else if (c == "cal4" && !isnan(adcFiltrado)) { calAdc4 = adcFiltrado; guardarPrefs(); Serial.printf("# cal4 = %.1f\n", calAdc4); }
-  else if (c == "calreset") { calAdc7 = 511; calAdc4 = 674; guardarPrefs(); Serial.println("# Calibracion de fabrica"); }
+  else if (c == "calreset") { calAdc7 = CAL_ADC7_DEF; calAdc4 = CAL_ADC4_DEF; guardarPrefs(); Serial.println("# Calibracion por defecto (607 = pH 6.95)"); }
   else if (c.startsWith("cebar") && estado == 0) {
     uint32_t ms = constrain(c.substring(5).toInt(), 50, 1000);
     Serial.printf("# Cebando manguera %lu ms (%.1f mL)\n", (unsigned long)ms, ms * CAUDAL_ML_S / 1000);
@@ -393,6 +406,94 @@ void enviarBlynk() {
 }
 #endif
 
+// ---------------- Página local + actualización por Wi-Fi ----------------
+WebServer server(80);
+bool otaError = false;
+
+void paginaEstado() {
+  char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", colR, colG, colB);
+  bool sta = WiFi.status() == WL_CONNECTED;
+#ifdef USE_BLYNK
+  bool nube = Blynk.connected();
+#else
+  bool nube = false;
+#endif
+  String h = "<!doctype html><html><head><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>"
+             "<meta http-equiv='refresh' content='2'><title>Control pH ARCE</title><style>"
+             "body{font-family:sans-serif;margin:16px;background:#f6f8fa;color:#1f2328}"
+             ".c{max-width:480px}.ph{font-size:56px;font-weight:700;margin:4px 0}"
+             "table{border-collapse:collapse;width:100%;background:#fff}td{border:1px solid #d0d7de;padding:8px}"
+             "a,button{display:inline-block;margin:4px 4px 4px 0;padding:10px 14px;border:0;border-radius:6px;"
+             "background:#0969da;color:#fff;text-decoration:none;font-size:15px}.r{background:#cf222e}"
+             "</style></head><body><div class='c'><h2>Control de pH — ARCE</h2>";
+  h += "<div style='height:56px;border-radius:8px;background:" + String(hex) + "'></div>";
+  h += "<div class='ph'>pH " + (isnan(ph) ? String("--") : String(ph, 2)) + "</div><table>";
+  h += "<tr><td>Umbral de apagado</td><td><b>" + String(umbral, 2) + "</b></td></tr>";
+  h += "<tr><td>Estado</td><td><b>" + String(NOMBRE_ESTADO[estado]) + "</b></td></tr>";
+  h += "<tr><td>Bomba</td><td>" + String(bombaOn ? "ENCENDIDA" : "apagada") + "</td></tr>";
+  h += "<tr><td>Dosis de esta sesión</td><td>" + String(bombaTotalMs * CAUDAL_ML_S / 1000.0f, 1) + " mL · " + String(nPulsos) + " pulsos</td></tr>";
+  h += "<tr><td>Último mensaje</td><td>" + ultimoMensaje + "</td></tr>";
+  h += "<tr><td>Sonda</td><td>ADC " + String(adcFiltrado, 1) + " · " + String(voltaje, 3) + " V</td></tr>";
+  h += "<tr><td>Ganancia aprendida</td><td>" + String(ganancia, 5) + " pH/ms</td></tr>";
+  h += "<tr><td>Consumo total de solución</td><td>" + String(bombaHistoricoMs * CAUDAL_ML_S / 1000.0f, 1) + " mL</td></tr>";
+  h += "<tr><td>Wi-Fi hackathon / Blynk</td><td>" + String(sta ? "conectado" : "sin conexión") + " / " + String(nube ? "conectado" : "sin conexión") + "</td></tr>";
+  h += "<tr><td>Tiempo encendido</td><td>" + String(millis() / 1000) + " s</td></tr></table>";
+  h += "<p><a href='/cmd?c=start'>Iniciar dosificación</a><a class='r' href='/cmd?c=stop'>Detener</a></p>";
+  h += "<form action='/cmd'>Umbral (4.5–7): <input name='u' type='number' step='0.1' min='4.5' max='7' value='" +
+       String(umbral, 1) + "' style='width:70px'> <button>Fijar</button></form>";
+  h += "<p><small><a href='/update' style='background:#6e7781'>Actualizar firmware</a></small></p></div></body></html>";
+  server.send(200, "text/html; charset=utf-8", h);
+}
+
+void paginaCmd() {
+  if (server.hasArg("c")) {
+    if (server.arg("c") == "start") solicitarInicio();
+    else if (server.arg("c") == "stop") solicitarParo();
+  }
+  if (server.hasArg("u")) {
+    umbral = constrain(server.arg("u").toFloat(), UMBRAL_MIN, UMBRAL_MAX); guardarPrefs();
+#ifdef USE_BLYNK
+    if (Blynk.connected()) Blynk.virtualWrite(V1, umbral);
+#endif
+  }
+  server.sendHeader("Location", "/"); server.send(303);
+}
+
+void paginaUpdateForm() {
+  if (!server.authenticate(OTA_USER, AP_PASS)) return server.requestAuthentication();
+  server.send(200, "text/html; charset=utf-8",
+    "<!doctype html><meta name='viewport' content='width=device-width,initial-scale=1'>"
+    "<body style='font-family:sans-serif;margin:16px'><h2>Actualizar firmware</h2>"
+    "<form method='POST' action='/update' enctype='multipart/form-data'>"
+    "<input type='file' name='firmware' accept='.bin'><br><br><input type='submit' value='Subir'></form></body>");
+}
+void paginaUpdateFin() {
+  if (!server.authenticate(OTA_USER, AP_PASS)) return server.requestAuthentication();
+  bool ok = !otaError && !Update.hasError();
+  server.send(ok ? 200 : 500, "text/plain", ok ? "OK, reiniciando\n" : "ERROR en la actualizacion\n");
+  delay(300);
+  if (ok) ESP.restart();
+}
+void paginaUpdateDatos() {
+  HTTPUpload& up = server.upload();
+  if (up.status == UPLOAD_FILE_START) {
+    otaError = !server.authenticate(OTA_USER, AP_PASS);
+    if (otaError) return;
+    if (estado != 0) finalizar("Actualizacion de firmware", false);   // detiene la dosificación
+    bombaApagar();                                                     // relevador apagado
+    uint8_t azul[3] = { 0, 0, LED_MAX }; xnWrite(ADDR_XN03, REG_RGB, azul, 3);
+    Serial.printf("# OTA: recibiendo %s\n", up.filename.c_str());
+    if (!Update.begin(UPDATE_SIZE_UNKNOWN)) otaError = true;
+  } else if (up.status == UPLOAD_FILE_WRITE && !otaError) {
+    if (Update.write(up.buf, up.currentSize) != up.currentSize) otaError = true;
+  } else if (up.status == UPLOAD_FILE_END && !otaError) {
+    if (!Update.end(true)) otaError = true;
+    Serial.printf("# OTA: %u bytes, %s\n", up.totalSize, otaError ? "ERROR" : "OK");
+  } else if (up.status == UPLOAD_FILE_ABORTED) {
+    Update.abort(); otaError = true;
+  }
+}
+
 // ---------------- setup / loop ----------------
 void setup() {
   Serial.begin(115200);
@@ -406,11 +507,19 @@ void setup() {
   calAdc7 = prefs.getFloat("cal7", calAdc7);
   calAdc4 = prefs.getFloat("cal4", calAdc4);
   umbral  = constrain(prefs.getFloat("umbral", umbral), UMBRAL_MIN, UMBRAL_MAX);
-  if (fabsf(calAdc4 - calAdc7) < 20) { calAdc7 = 511; calAdc4 = 674; }   // calibración absurda
+  if (fabsf(calAdc4 - calAdc7) < 20) { calAdc7 = CAL_ADC7_DEF; calAdc4 = CAL_ADC4_DEF; }   // calibración absurda
+  // Red propia (página local + /update) y, con Blynk, también la red con Internet
+  WiFi.mode(WIFI_AP_STA);
+  WiFi.softAP(AP_SSID, AP_PASS);
 #ifdef USE_BLYNK
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Blynk.config(BLYNK_AUTH_TOKEN);
 #endif
+  server.on("/", paginaEstado);
+  server.on("/cmd", paginaCmd);
+  server.on("/update", HTTP_GET, paginaUpdateForm);
+  server.on("/update", HTTP_POST, paginaUpdateFin, paginaUpdateDatos);
+  server.begin();
   tono(1000, 80);
   Serial.println("ms,adc,voltaje,pH,umbral,estado,bomba,dosis_mL,ganancia");
 }
@@ -426,6 +535,7 @@ void loop() {
 
   actualizarControl();
   actualizarMelodia();
+  server.handleClient();
 
   // Seguridad: si no estamos en un pulso, el relevador debe estar apagado
   if (estado != 1 && ahora - tRele >= 2000) { tRele = ahora; setRele(false); }
@@ -450,7 +560,7 @@ void loop() {
 #ifdef USE_BLYNK
   static uint32_t tIntento = 0, tEnvio = 0;
   if (WiFi.status() == WL_CONNECTED) {
-    if (!Blynk.connected() && ahora - tIntento > 10000) { tIntento = ahora; Blynk.connect(1000); }
+    if (!Blynk.connected() && estado == 0 && ahora - tIntento > 10000) { tIntento = ahora; Blynk.connect(3000); }   // solo con la bomba parada
     if (Blynk.connected()) {
       Blynk.run();
       if (ahora - tEnvio >= 1000) { tEnvio = ahora; enviarBlynk(); }

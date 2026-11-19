@@ -4,23 +4,24 @@ Equipo **ARCE** (Instituto Tecnológico de Puebla) · Reto: [*Monitoreo y contro
 
 Sistema que mide el pH del agua, dosifica una solución de pH 4 con una bomba hasta un umbral definido por el usuario (4.5–7), **sin pasarse**, y se supervisa desde Blynk.Cloud y desde un dashboard propio servido por el ESP32.
 
-> Referencia técnica completa (pines, registros I2C, erratas, conexiones): [`XIDE_DISPOSITIVO.md`](XIDE_DISPOSITIVO.md)
+> 📘 **Documentación completa para la presentación:** [`DOCUMENTACION.md`](DOCUMENTACION.md) (arquitectura, algoritmo, pruebas, problemas resueltos, guion y preguntas del jurado)
+> Pines y registros verificados: [`PINES.md`](PINES.md) · Referencia del kit: [`XIDE_DISPOSITIVO.md`](XIDE_DISPOSITIVO.md)
 
 ---
 
-## Estado actual (19 nov 2026)
+## Estado actual (19 nov 2026, ~12:45)
 
 | Elemento | Estado |
 |---|---|
-| ESP32-S3 (XC01, MAC …1B:10) | ✅ Programa por USB · firmware original respaldado en `backup/` |
-| XN03 (sonda pH / potenciómetro / LED RGB) en `0x03` | ✅ Responde (verificado por Wi-Fi) |
-| XN44 (buzzer) en `0x2C` | ✅ Responde |
-| XN13 (relevador de la bomba) en `0x0D` | ⏳ Pendiente de montar |
-| Sonda de pH en XN03 IN1 | ⏳ Pendiente de conectar y calibrar |
-| Wi-Fi propio del ESP32 (`ARCE-prueba`) | ✅ Emite con señal 100 % |
-| `prueba_kit` | ✅ Cargado en la placa (no activa la bomba) |
-| `control_ph` | ✅ Compila · ⏳ sin probar en hardware |
-| Blynk | ⏳ Falta crear la plantilla y el `secrets.h` |
+| ESP32-S3 (XC01, MAC …1B:10) | ✅ Con `control_ph` cargado · firmware original respaldado en `backup/` |
+| XN03 (sonda / potenciómetro / LED RGB) en `0x03` | ✅ Responde (FW 2.0.2) · LED con el indicador universal |
+| XN44 (buzzer) en `0x2C` | ✅ Responde (FW 2.1.0) |
+| XN13 (relevador) en `0x0D` | ⚠️ Responde a su dirección y a las escrituras · sus lecturas devuelven 0xFF |
+| Sonda de pH (XN03 IN1) | ✅ Calibrada: ADC 607 = pH 6.95 · lectura 6.93–6.97 |
+| Bus I2C | ✅ 2704/2704 lecturas correctas (100 %) |
+| Wi-Fi propio `ARCE-prueba` + página local + OTA `/update` | ✅ Verificado (OTA en 7 s) |
+| Blynk (plantilla BomACER, NY3) | ✅ Online · 10 datastreams · panel web con 8 widgets |
+| **Dosificación con agua real** | ⏳ Pendiente |
 
 ---
 
