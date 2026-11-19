@@ -266,6 +266,17 @@ Entre dos valores enteros el color se interpola, por ejemplo 6.5 es amarillo ver
 - **Diseño:** pensado primero para el celular, con modo claro u oscuro automático y aviso de "sin conexión".
 - **API JSON:** `GET /api/estado` devuelve pH, ADC, voltaje, umbral, estado, bomba, mL de la sesión, pulsos, ganancia, consumo total, mensaje, color, Wi-Fi, Blynk, tiempo encendido y `ultima_sesion` (pH inicial y final, umbral, error, mL, pulsos, duración, motivo y éxito).
 
+### 5.9.1 Dashboard remoto público (Tailscale Funnel)
+- **URL pública:** **https://acer.tail2b1858.ts.net:8443**. Cualquiera puede abrirla desde cualquier red, sin instalar nada.
+- **Funcionamiento:** ESP32 → Blynk.Cloud → `remoto/puente_blynk.py` en la portátil (127.0.0.1:8090) → Tailscale Funnel (HTTPS).
+- **Mismo dashboard** que el del ESP32, con datos de Blynk cada ~2 s (una sola petición por ciclo, compartida por todos los visitantes).
+- **Solo lectura:** se ocultan los paneles de Control, Módulos y Pruebas, y `/cmd`, `/test`, `/diag` y `/update` responden 403. Nadie de fuera puede encender la bomba. El token de Blynk se queda en la portátil.
+- **Limitaciones:**
+  - depende de que la portátil esté encendida, con Internet y con el puente en marcha;
+  - mientras la portátil se conecta a `ARCE-prueba` para subir firmware (~1 min), la vista remota se corta;
+  - algunos datos solo existen en el ESP32 (pulsos, ganancia, versiones de los módulos) y en la vista remota salen como "--".
+- **Arrancar:** `python3 -I remoto/puente_blynk.py` · **publicar:** `tailscale funnel --bg --https=8443 http://127.0.0.1:8090` · **retirar:** `tailscale funnel --https=8443 off`
+
 ### 5.10 Rutas de prueba y diagnóstico (solo en REPOSO)
 | Ruta | Qué hace |
 |---|---|
