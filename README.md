@@ -4,7 +4,7 @@ Equipo **ARCE** (Instituto Tecnológico de Puebla) · Reto: [*Monitoreo y contro
 
 Sistema que mide el pH del agua, dosifica una solución de pH 4 con una bomba hasta un umbral definido por el usuario (4.5–7), **sin pasarse**, y se supervisa desde Blynk.Cloud y desde un dashboard propio servido por el ESP32.
 
-> 📘 **Documentación completa para la presentación:** [`DOCUMENTACION.md`](DOCUMENTACION.md) (arquitectura, algoritmo, pruebas, problemas resueltos, guion y preguntas del jurado)
+> 📘 **Documentación completa para la presentación:** [`DOCUMENTACION.md`](DOCUMENTACION.md) · 📱 **Guía del dashboard de Blynk:** [`BLYNK.md`](BLYNK.md) (arquitectura, algoritmo, pruebas, problemas resueltos, guion y preguntas del jurado)
 > Pines y registros verificados: [`PINES.md`](PINES.md) · Referencia del kit: [`XIDE_DISPOSITIVO.md`](XIDE_DISPOSITIVO.md)
 
 ---

@@ -426,6 +426,7 @@ En modo AP + STA, el **ahorro de energía del Wi-Fi** ralentizaba la red propia:
 | Archivo | Contenido |
 |---|---|
 | `DOCUMENTACION.md` | Este documento |
+| `BLYNK.md` | Guía de cada apartado del dashboard de Blynk, mensajes y problemas frecuentes |
 | `README.md` | Arranque rápido, estado y comandos |
 | `PINES.md` | Registro verificado de pines, direcciones I2C, registros y lecturas |
 | `XIDE_DISPOSITIVO.md` | Referencia del kit XIDE, el reto, erratas de la documentación oficial |
