@@ -31,7 +31,7 @@
 const uint8_t ADDR_XN03 = 0x03;   // E/S analógicas: sonda pH en IN1, pot, LED RGB
 const uint8_t ADDR_XN13 = 0x0D;   // relevador de la bomba
 const uint8_t ADDR_XN44 = 0x2C;   // buzzer
-const uint8_t LED_MAX   = 100;    // subir a 255 si el RGB se ve tenue
+const uint8_t LED_MAX   = 255;    // el XN03 acepta 0–255 (verificado)
 // Calibración ARCE 19-nov: ADC 607 = pH 6.95 (pendiente de fábrica 54.33 ADC/pH)
 const float CAL_ADC7 = 604.3f, CAL_ADC4 = 767.3f;
 

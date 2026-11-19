@@ -57,7 +57,7 @@ const uint8_t REG_ADC_TEMP = 0x22;   // XN03 ADC2 (IN2)
 const uint8_t REG_RGB      = 0x01;   // XN03 O1_RED.. (R, G, B)
 const uint8_t REG_RELAY    = 0x01;   // XN13
 const uint8_t REG_TONE     = 0x01;   // XN44
-const uint8_t LED_MAX      = 100;    // subir a 255 si el RGB del XN03 usa 0–255
+const uint8_t LED_MAX      = 255;    // el XN03 acepta 0–255 (verificado): brillo máximo
 
 // ---------------- Calibración pH ----------------
 // Tabla del fabricante (ADC 10 bits, 3.3 V): pH 7 = 511, pH 4 = 674 (pendiente 54.33 ADC/pH).
@@ -166,9 +166,9 @@ void bombaApagar() {
 }
 
 // ---------------- Buzzer (melodías no bloqueantes) ----------------
-const uint16_t MEL_INICIO[][2]  = { {880, 120}, {1320, 120}, {1760, 220} };   // ascendente
-const uint16_t MEL_FIN[][2]     = { {1760, 120}, {1320, 120}, {880, 300} };   // descendente
-const uint16_t MEL_RECHAZO[][2] = { {300, 200}, {0, 100}, {300, 200} };       // grave doble
+const uint16_t MEL_INICIO[][2]  = { {2000, 150}, {2700, 150}, {3500, 280} };  // ascendente (2–3.5 kHz: el piezo suena más fuerte)
+const uint16_t MEL_FIN[][2]     = { {3500, 150}, {2700, 150}, {2000, 400} };  // descendente
+const uint16_t MEL_RECHAZO[][2] = { {1200, 250}, {0, 120}, {1200, 250} };     // doble, más grave
 const uint16_t (*melodia)[2] = nullptr;
 uint8_t melLen = 0, melIdx = 0;
 uint32_t melSiguiente = 0;
@@ -755,7 +755,7 @@ void setup() {
   server.on("/update", HTTP_GET, paginaUpdateForm);
   server.on("/update", HTTP_POST, paginaUpdateFin, paginaUpdateDatos);
   server.begin();
-  tono(1000, 80);
+  tono(2700, 100);
   Serial.println("ms,adc,voltaje,pH,umbral,estado,bomba,dosis_mL,ganancia");
 }
 

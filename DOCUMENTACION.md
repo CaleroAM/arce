@@ -202,11 +202,11 @@ Entre dos valores enteros el color se interpola, por ejemplo 6.5 es amarillo ver
 
 | Situación especial | LED del XN03 |
 |---|---|
-| Actualización de firmware en curso | 🟦 **Azul fijo** |
+| Actualización de firmware en curso | 🟦 **Azul fijo** (y el relevador forzado a apagado: no suena) |
 | Prueba de colores (`/test?colores=1`) | Recorre todo el indicador, de pH 0 a 14, en 15 s |
 | Sonda sin lectura válida | Apagado |
 
-**Registros (verificado leyendo de vuelta):** `0x01` = R, `0x02` = G, `0x03` = B, con valores de 0–100. Escribir 3 bytes en `0x01` rellena los tres canales. Un 4.º byte opcional regula el brillo de los tres; sin él, el brillo es el máximo. `LED_MAX = 100`.
+**Registros (verificado leyendo de vuelta):** `0x01` = R, `0x02` = G, `0x03` = B, con valores de **0–255** (verificado). Escribir 3 bytes en `0x01` rellena los tres canales. Un 4.º byte opcional regula el brillo de los tres; sin él, el brillo es el máximo. `LED_MAX = 255` (brillo máximo).
 
 **LED de la placa XC01 (GPIO16):** **se enciende mientras la bomba está activa**, durante cada pulso.
 
@@ -214,10 +214,10 @@ Entre dos valores enteros el color se interpola, por ejemplo 6.5 es amarillo ver
 
 | Evento | Sonido | Frecuencias |
 |---|---|---|
-| Arranque de la placa | 1 pitido corto | 1000 Hz, 80 ms |
-| **Inicio de la dosificación** | Melodía **ascendente** de 3 notas | 880 → 1320 → 1760 Hz |
-| **Fin de la dosificación** (umbral alcanzado, cancelado o error) | Melodía **descendente** de 3 notas | 1760 → 1320 → 880 Hz |
-| **Activación rechazada** (pH ≤ umbral o sonda inválida) | **Dos tonos graves** | 300 Hz × 2 |
+| Arranque de la placa | 1 pitido corto | 2700 Hz, 100 ms |
+| **Inicio de la dosificación** | Melodía **ascendente** de 3 notas | 2000 → 2700 → 3500 Hz |
+| **Fin de la dosificación** (umbral alcanzado, cancelado o error) | Melodía **descendente** de 3 notas | 3500 → 2700 → 2000 Hz |
+| **Activación rechazada** (pH ≤ umbral o sonda inválida) | **Dos tonos** más graves | 1200 Hz × 2 |
 
 > ⚠️ El piezo suena mucho más fuerte hacia 2.5–4 kHz. En un ambiente ruidoso, como el gimnasio, conviene subir las melodías a ese rango.
 
