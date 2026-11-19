@@ -80,7 +80,7 @@ Reto oficial: [*Monitoreo y control de calidad de agua IoT*](https://docs.micros
 | Controlador | **XC01 R5** — ESP32-S3 (QFN56, rev 0.2), 240 MHz doble núcleo, **16 MB de flash, sin PSRAM**, Wi-Fi y BLE 5 | Cerebro del sistema | ✅ esptool |
 | Placa base | **XBI01 IIoTrainer** | 5 zócalos mikroBUS con el bus I2C compartido | ✅ |
 | E/S analógicas | **XN03** R2, FW 2.0.2 | ADC de 10 bits para la sonda, potenciómetro, LED RGB | ✅ WHO_AM_I = 3 |
-| Relevador | **XN13** (Panasonic DK1A1B-5V, 8 A) | Enciende y apaga la bomba | ⚠️ Acepta escrituras, pero sus lecturas devuelven 0xFF |
+| Relevador | **XN13 R1** — Songle SRD-05VDC-SL-C, **firmware 0.1** | Enciende y apaga la bomba | ✅ **Por UART** (`XN13A+S=1/0` → `OK`) |
 | Buzzer | **XN44** R1, FW 2.1.0 | Alertas sonoras | ✅ WHO_AM_I = 44 |
 | Fuente | **XN14** | 12 V → 3.3 / 5 V | ✅ |
 | Sonda | PH-4502C con tarjeta analógica | Po (pH) → IN1 · To (temperatura) → IN2 | ✅ |
@@ -303,6 +303,8 @@ En modo AP + STA, el **ahorro de energía del Wi-Fi** ralentizaba la red propia:
 | 13:40 | **Diagnóstico del buzzer** (escritura y lectura de vuelta) | ✅ TONE = `03 E8 03 E8` (1000 Hz, 1000 ms) · STAT 0 · ❓ el equipo no lo oyó |
 | 13:40 | **Diagnóstico del LED RGB** | ✅ R/G/B guardados correctamente en 0x01–0x03 · ❓ el equipo no vio el recorrido de colores |
 | 13:43 | Bomba | ⚠️ **El equipo informa que la bomba no se apaga**, mientras el firmware está en REPOSO con el relevador en apagado → sospecha de cableado en **NC en lugar de NA**, conexión directa, o relevador defectuoso (sus lecturas devuelven 0xFF) |
+| 13:57 | **Identificación por UART** | ✅ XN03 = 2.0.2.R02 · XN44 = 2.1.0.R01 · **XN13 = 0.1** (firmware antiguo R1) |
+| 14:00 | **Relevador por UART** (`XN13A+S=0` cada 2 s) | ✅ Responde `OK` en cada orden · versiones y confirmación visibles en el dashboard propio (panel "Módulos") |
 | Pendiente | **Dosificación con agua real** | ⏳ |
 | Pendiente | Medir la solución de pH 4 (segundo punto de calibración) | ⏳ |
 
@@ -317,7 +319,7 @@ En modo AP + STA, el **ahorro de energía del Wi-Fi** ralentizaba la red propia:
 | La portátil no detectaba el ESP32 | El kernel no registraba ningún evento USB: **el cable solo cargaba** | Usar un cable USB-C de datos |
 | El cable USB choca con los módulos montados | Limitación física de la maqueta | **OTA por HTTP** y página local por Wi-Fi |
 | El agua neutra se leía como pH 5.2 | La sonda tiene un desplazamiento de unas 96 unidades de ADC respecto a la tabla del fabricante | Calibración por software (607 = 6.95) y comandos `cal7` / `cal4` |
-| Las lecturas del XN13 devuelven 0xFF | El módulo acepta su dirección y las escrituras, pero no responde a las lecturas | El control solo **escribe** en el relevador. Pendiente: probar *repeated start* o cambiar el módulo |
+| **La bomba no se apagaba** y las lecturas del XN13 daban 0xFF | Por UART, el XN13 se identificó como **firmware 0.1** (R1, Songle), sin la tabla de registros I2C de la R2. La orden I2C de "apagar" (`01,00`) lo dejaba **encendido**, y se repetía cada 2 s | **Control del relevador por UART** (`XN13A+S=1/0`), con confirmación `OK`. Panel "Módulos" en el dashboard. También se corrigió `prueba_kit` |
 | `espota` no funcionaba | El firewall de NixOS bloquea la conexión de vuelta del ESP32 | OTA por HTTP (`/update`), sin abrir puertos |
 | Blynk aparecía "sin conexión" | El token estaba invalidado y la plantilla había cambiado | Se creó el dispositivo en la plantilla BomACER con un token nuevo y se amplió el tiempo de conexión a 3 s |
 | No se podía vigilar la placa sin perder Internet | La red del evento aísla a los clientes entre sí | Lecturas puntuales por `ARCE-prueba` y supervisión continua por Blynk |
@@ -397,7 +399,8 @@ En modo AP + STA, el **ahorro de energía del Wi-Fi** ralentizaba la red propia:
 
 - [ ] **Prueba de dosificación con agua real**, con umbral 6.5 → anotar el pH final y el error.
 - [ ] Medir la **solución de pH 4** para confirmar la pendiente (ADC ≈767 esperado).
-- [ ] **Bomba que no se apaga:** revisar el cableado del XN13 (debe ir **COM + NA**, no NC) y su LED. Cambiar el módulo si está pegado.
+- [x] **Bomba que no se apagaba:** causa = firmware 0.1 del XN13 + orden I2C incompatible → resuelto con control por UART.
+- [ ] Reconectar la bomba en **COM + NA** y probar `/test?rele=100` (un pulso) con la manguera en líquido.
 - [ ] Confirmar **físicamente** las melodías (subir a 2.5–4 kHz si no se oyen) y los colores del LED (subir el brillo).
 - [ ] Confirmar que el **interruptor Dosificar** de Blynk arranca la dosificación con umbral < pH.
 - [ ] Panel de **Blynk en la app** del celular.

@@ -108,9 +108,42 @@ uint32_t bombaApagarEn = 0, bombaInicio = 0;
 uint32_t bombaTotalMs = 0;            // acumulado de la sesión de dosificación
 uint32_t bombaHistoricoMs = 0;        // acumulado desde el arranque (consumo de solución)
 
+// El XN13 del kit tiene firmware 0.1 (R1, relevador Songle): NO tiene la tabla de registros I2C
+// de la R2. Por I2C, escribir 01,00 ("registro RELAY = apagado") podía ENCENDERLO. Se controla por
+// UART (mikroBUS RX=9, TX=10, 115200 8N1) con XN13A+S=1 / XN13A+S=0, y el módulo confirma con "OK".
+bool serial2Listo = false;
+String releUltimaRespuesta = "";
+bool releConfirmado = false;
+uint32_t releUltimaMs = 0;
+String fwXN03 = "", fwXN13 = "", fwXN44 = "";
+
+void iniciarUart() {
+  if (!serial2Listo) { Serial2.begin(115200, SERIAL_8N1, 9, 10); serial2Listo = true; delay(10); }
+}
+String uartComando(const String& cmd, uint16_t esperaMs) {
+  iniciarUart();
+  while (Serial2.available()) Serial2.read();
+  Serial2.print(cmd); Serial2.print("\r\n");
+  String resp; uint32_t t0 = millis();
+  while (millis() - t0 < esperaMs) {
+    while (Serial2.available()) resp += (char)Serial2.read();
+    if (resp.endsWith("\n")) break;
+    delay(1);
+  }
+  resp.trim();
+  return resp;
+}
+String versionModulo(const char* prefijo) {          // "XN13A" -> "0.1"
+  String r = uartComando(String(prefijo) + "+V", 150);
+  int p = r.indexOf('=');
+  return p > 0 ? r.substring(p + 1) : String("sin respuesta");
+}
 bool setRele(bool on) {
-  uint8_t v = on ? 0x01 : 0x00;
-  return xnWrite(ADDR_XN13, REG_RELAY, &v, 1);
+  String r = uartComando(on ? "XN13A+S=1" : "XN13A+S=0", 80);
+  releUltimaRespuesta = r.length() ? r : String("(sin respuesta)");
+  releConfirmado = (r == "OK");
+  releUltimaMs = millis();
+  return releConfirmado;
 }
 void bombaPulso(uint32_t ms) {
   if (!setRele(true)) { Serial.println("# ERROR: no responde el relevador XN13"); return; }
@@ -505,6 +538,11 @@ void apiEstado() {
   j += ",\"wifi_sta\":";      j += sta ? "true" : "false";
   j += ",\"blynk\":";         j += nube ? "true" : "false";
   j += ",\"uptime_s\":";      j += String(millis() / 1000);
+  j += ",\"modulos\":{\"xn03\":"; j += jsonStr(fwXN03); j += ",\"xn13\":"; j += jsonStr(fwXN13);
+  j += ",\"xn44\":"; j += jsonStr(fwXN44); j += "}";
+  j += ",\"rele_confirmado\":"; j += releConfirmado ? "true" : "false";
+  j += ",\"rele_respuesta\":"; j += jsonStr(releUltimaRespuesta);
+  j += ",\"rele_hace_s\":";  j += String(releUltimaMs ? (millis() - releUltimaMs) / 1000 : 0);
   j += ",\"ultima_sesion\":";
   if (!sesValida) j += "null";
   else {
@@ -538,7 +576,6 @@ String ultimoTest = "";
 //   /diag?tono=HZ,MS&modo=a|b        a: MSB primero (actual) · b: LSB primero
 uint32_t diagLedHasta = 0;            // mientras tanto no se sobreescribe el LED con el color del pH
 uint32_t diagReleHasta = 0;           // mientras tanto no se repite el "apagado" periódico del relevador
-bool serial2Iniciado = false;
 //   /diag?uart=XN13A+V               envía un comando UART (115200, RX=9 TX=10) y devuelve la respuesta
 //   /diag?rele_raw=00 | 01,00 | ...  escribe bytes crudos al XN13 (0x0D) sin registro
 
@@ -573,7 +610,7 @@ void paginaDiag() {
     delay(20);
   }
   if (server.hasArg("uart")) {
-    if (!serial2Iniciado) { Serial2.begin(115200, SERIAL_8N1, 9, 10); serial2Iniciado = true; delay(20); }
+    iniciarUart();
     while (Serial2.available()) Serial2.read();
     String cmd = server.arg("uart");
     Serial2.print(cmd); Serial2.print("\r\n");
@@ -693,7 +730,9 @@ void setup() {
   Wire.setPins(I2C_SDA, I2C_SCL);
   Wire.begin();
   delay(100);
-  setRele(false);                                  // estado seguro
+  fwXN03 = versionModulo("XN03A"); fwXN13 = versionModulo("XN13A"); fwXN44 = versionModulo("XN44A");
+  Serial.printf("# Modulos: XN03=%s XN13=%s XN44=%s\n", fwXN03.c_str(), fwXN13.c_str(), fwXN44.c_str());
+  setRele(false);                                  // estado seguro (por UART, con confirmacion)
   prefs.begin("ph", false);
   calAdc7 = prefs.getFloat("cal7", calAdc7);
   calAdc4 = prefs.getFloat("cal4", calAdc4);
@@ -740,7 +779,8 @@ void loop() {
 
   // Seguridad: si no estamos en un pulso, el relevador debe estar apagado
   if (estado != 1 && ahora - tRele >= 2000 && (int32_t)(ahora - diagReleHasta) >= 0) { tRele = ahora; setRele(false); }
-  if ((bombaOn && estado != 1) || releApagadoPendiente) bombaApagar();
+  static uint32_t tReintento = 0;
+  if ((bombaOn && estado != 1) || (releApagadoPendiente && ahora - tReintento >= 500)) { tReintento = ahora; bombaApagar(); }
 
   // Botón BOOT: inicia / detiene
   static bool btnPrev = HIGH; static uint32_t tBtn = 0;

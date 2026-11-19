@@ -89,6 +89,11 @@ footer a{color:var(--mu)}
 <div class="k"><small>Voltaje</small><b id="kV">--</b></div>
 <div class="k"><small>Tiempo encendido</small><b id="kUp">--</b></div>
 <div class="k"><small>Color indicador</small><b id="kCol">--</b></div></div></section>
+<section class="c span"><h2>Módulos</h2><div class="kp">
+<div class="k"><small>XN03 · sonda, pot, LED</small><b id="mX03">--</b></div>
+<div class="k"><small>XN13 · relevador</small><b id="mX13">--</b></div>
+<div class="k"><small>XN44 · buzzer</small><b id="mX44">--</b></div>
+<div class="k"><small>Relevador confirma</small><b id="mRel">--</b></div></div></section>
 <section class="c span"><h2>Pruebas de funciones</h2>
 <div class="row"><button class="sec" data-t="sonido=inicio">Sonido inicio</button><button class="sec" data-t="sonido=fin">Sonido fin</button><button class="sec" data-t="sonido=rechazo">Sonido rechazo</button><button class="sec" data-t="colores=1">Recorrer colores</button></div>
 <div class="lnk" style="margin-top:10px">Bomba: <a href="#" data-b="rele=100">pulso de relevador 100 ms</a> · <a href="#" data-b="cebar=300">cebar manguera 300 ms</a></div>
@@ -118,6 +123,8 @@ function render(d){
  $("kGa").textContent=d.ganancia?f(d.ganancia*1000,2):"--";$("kCo").textContent=f(d.consumo_total_ml,1)+" mL";
  $("kAdc").textContent=f(d.adc,1);$("kV").textContent=f(d.voltaje,3)+" V";$("kUp").textContent=dur(d.uptime_s);$("kCol").textContent=hx;
  pill("pWifi",d.wifi_sta,d.wifi_sta?"Wi-Fi: conectado":"Wi-Fi: sin Internet");pill("pBlynk",d.blynk,d.blynk?"Blynk: conectado":"Blynk: desconectado");
+ var m=d.modulos||{};$("mX03").textContent="FW "+(m.xn03||"--");$("mX13").textContent="FW "+(m.xn13||"--");$("mX44").textContent="FW "+(m.xn44||"--");
+ var rel=$("mRel");rel.textContent=(d.rele_confirmado?"✔ OK":"✖ "+(d.rele_respuesta||"sin respuesta"))+" · hace "+dur(d.rele_hace_s);rel.style.color=d.rele_confirmado?"":"#cf222e";
  var busy=d.estado!=="REPOSO";$("bStart").disabled=busy;$("bStop").disabled=!busy;
  var iu=$("inU");if(document.activeElement!==iu)iu.value=f(d.umbral,1);
  ses(d.ultima_sesion);

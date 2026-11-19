@@ -57,7 +57,7 @@ Wire.begin();           // 100 kHz
 | Módulo | Dirección | Función | Estado |
 |---|---|---|---|
 | **XN03** Analog Inputs/Outputs | **`0x03`** | Lee la sonda (IN1/IN2), potenciómetro, LED RGB | ✅ responde · WHO_AM_I 3 rev 2 · FW 2.0.2 · STAT 0x00 |
-| **XN13** Relay | **`0x0D`** | Enciende/apaga la bomba | ⚠️ contesta a su dirección, pero **todas sus lecturas devuelven 0xFF** (WHO_AM_I, FW, STAT y RELAY) |
+| **XN13** Relay | **`0x0D`** (I2C) · **UART `XN13A`** | Enciende/apaga la bomba | ✅ **Firmware 0.1** (R1, relevador Songle SRD-05VDC-SL-C) · **se controla por UART** con confirmación "OK" · ⚠️ por I2C sus lecturas dan 0xFF y escribir `01,00` podía **encenderlo** |
 | **XN44** Buzzer | **`0x2C`** | Alertas sonoras | ✅ responde · WHO_AM_I 44 rev 1 · FW 2.1.0 · STAT 0x00 |
 | **XN14** Power Supply | — | Fuente 12 V → 3.3 V / 5 V (no tiene I2C) | ✅ alimenta la placa |
 
@@ -83,7 +83,18 @@ Constantes: `CAL_ADC7 = 604.3`, `CAL_ADC4 = 767.3` (en `prueba_kit` y `control_p
 
 <small>Tabla original del fabricante, sin calibrar: pH 7 ≈ 511 · pH 4 ≈ 674.</small>
 
-### XN13 — `0x0D`
+### XN13 — controlado por **UART** (firmware 0.1)
+| Comando (115200 8N1, RX GPIO9 / TX GPIO10, terminar en `\r\n`) | Respuesta | Uso |
+|---|---|---|
+| `XN13A?` | `OK` | ¿Está presente? |
+| `XN13A+V` | `XN13A=0.1` | Versión del firmware |
+| **`XN13A+S=1`** | `OK` | **Encender** el relevador (bomba) |
+| **`XN13A+S=0`** | `OK` | **Apagar** el relevador |
+
+> ✅ Verificado el 19 nov (14:00): el firmware envía `XN13A+S=0` cada 2 s en reposo y el módulo responde `OK`.
+> ⛔ **No usar I2C para el XN13 de este kit:** el firmware 0.1 no tiene la tabla de registros de la R2. Escribir `01,00` ("RELAY = apagado") lo dejaba encendido, y por eso **la bomba no se apagaba**.
+
+#### Referencia I2C de la ficha R2 (NO aplica a este kit)
 | Registro | Qué es | Formato | Estado |
 |---|---|---|---|
 | **`0x01`** | **RELAY** | escribir `0x01` = encendido · `0x00` = apagado | 📄 · ⚠️ al leerlo **no devolvió `0x00`** tras escribir "apagado" |

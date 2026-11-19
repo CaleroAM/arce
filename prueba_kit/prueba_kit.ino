@@ -126,6 +126,17 @@ void leerIdentidad(uint8_t i) {
               xnRead(DIRS[i], 0x37, &estadoMod[i], 1);
 }
 
+// XN13 con firmware 0.1: se apaga por UART (XN13A+S=0 -> "OK"). Por I2C, 01,00 podía ENCENDERLO.
+bool uartListo = false;
+bool releApagarUart() {
+  if (!uartListo) { Serial2.begin(115200, SERIAL_8N1, 9, 10); uartListo = true; delay(10); }
+  while (Serial2.available()) Serial2.read();
+  Serial2.print("XN13A+S=0\r\n");
+  String r; uint32_t t0 = millis();
+  while (millis() - t0 < 80) { while (Serial2.available()) r += (char)Serial2.read(); if (r.endsWith("\n")) break; delay(1); }
+  r.trim(); return r == "OK";
+}
+
 void detectar() {
   hay03 = presente(ADDR_XN03);
   hay13 = presente(ADDR_XN13);
@@ -142,7 +153,8 @@ void detectar() {
   releOk = false;
   if (hay13) {                                    // NUNCA enciende: escribe "apagado" y lo lee de vuelta
     uint8_t off = 0x00, leido = 0xFF;
-    releOk = xnWrite(ADDR_XN13, 0x01, &off, 1) && xnRead(ADDR_XN13, 0x01, &leido, 1) && leido == 0x00;
+    (void)off; (void)leido;
+    releOk = releApagarUart();                    // confirma "OK" por UART
     rs13Ok = xnReadRS(ADDR_XN13, 0x3E, who13rs, 2) && xnReadRS(ADDR_XN13, 0x38, fw13rs, 3) &&
              xnReadRS(ADDR_XN13, 0x01, &rele13rs, 1);
   }
@@ -253,7 +265,7 @@ void paginaUpdateDatos() {
   if (up.status == UPLOAD_FILE_START) {
     otaError = !server.authenticate(OTA_USER, AP_PASS);
     if (otaError) return;
-    uint8_t off = 0x00; xnWrite(ADDR_XN13, 0x01, &off, 1);   // relevador apagado durante la actualización
+    releApagarUart();                             // relevador apagado durante la actualización
     setRGB(0, 0, 255);
     Serial.printf("OTA HTTP: recibiendo %s\n", up.filename.c_str());
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) otaError = true;
@@ -300,7 +312,7 @@ void setup() {
   ArduinoOTA.setHostname("arce-ph");
   ArduinoOTA.setPassword(AP_PASS);
   ArduinoOTA.onStart([]() {
-    uint8_t off = 0x00; xnWrite(ADDR_XN13, 0x01, &off, 1);   // relevador apagado durante la actualización
+    releApagarUart();                             // relevador apagado durante la actualización
     setRGB(0, 0, 255);
   });
   ArduinoOTA.begin();
