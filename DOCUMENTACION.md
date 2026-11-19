@@ -184,6 +184,52 @@ Arduino, core esp32 4.0.0. Ocupa el 33 % de la flash y el 15 % de la RAM.
 | **Físicas** | En la maqueta | LED RGB con el indicador universal, melodías del buzzer, botón BOOT (iniciar/detener) |
 | **Serie** (USB) | 115200 baudios | CSV continuo y comandos `start`, `stop`, `umbral X`, `cal7`, `cal4`, `calreset`, `cebar MS`, `info` |
 
+### 5.6.1 Indicadores físicos: qué significa cada luz y cada sonido
+
+**LED RGB del XN03** (el módulo del potenciómetro) — **indicador universal de pH**, se actualiza cada 0.5 s:
+
+| pH | Color | Carácter | | pH | Color | Carácter |
+|---|---|---|---|---|---|---|
+| 0 | 🟥 Rojo intenso | Ácido fuerte | | 8 | 🟦 Verde azulado | Alcalino débil |
+| 1–2 | 🟥 Rojo | Ácido fuerte | | 9 | 🟦 Azul | Alcalino débil |
+| 3 | 🟧 Rojo-naranja | Ácido | | 10 | 🟦 Azul oscuro | Alcalino |
+| 4 | 🟧 Naranja | Ácido | | 11 | 🟪 Índigo | Alcalino |
+| 5 | 🟨 Amarillo-naranja | Ácido débil | | 12–13 | 🟪 Violeta | Alcalino fuerte |
+| 6 | 🟨 Amarillo | Ácido débil | | 14 | 🟪 Violeta oscuro | Alcalino fuerte |
+| **7** | 🟩 **Verde** | **Neutro** | | | | |
+
+Entre dos valores enteros el color se interpola, por ejemplo 6.5 es amarillo verdoso. **Durante la dosificación** de 7 → 4.5 el LED pasa de **verde → amarillo → naranja**.
+
+| Situación especial | LED del XN03 |
+|---|---|
+| Actualización de firmware en curso | 🟦 **Azul fijo** |
+| Prueba de colores (`/test?colores=1`) | Recorre todo el indicador, de pH 0 a 14, en 15 s |
+| Sonda sin lectura válida | Apagado |
+
+**Registros (verificado leyendo de vuelta):** `0x01` = R, `0x02` = G, `0x03` = B, con valores de 0–100. Escribir 3 bytes en `0x01` rellena los tres canales. Un 4.º byte opcional regula el brillo de los tres; sin él, el brillo es el máximo. `LED_MAX = 100`.
+
+**LED de la placa XC01 (GPIO16):** **se enciende mientras la bomba está activa**, durante cada pulso.
+
+**Buzzer XN44** (verificado: el registro TONE guarda exactamente la frecuencia y la duración enviadas):
+
+| Evento | Sonido | Frecuencias |
+|---|---|---|
+| Arranque de la placa | 1 pitido corto | 1000 Hz, 80 ms |
+| **Inicio de la dosificación** | Melodía **ascendente** de 3 notas | 880 → 1320 → 1760 Hz |
+| **Fin de la dosificación** (umbral alcanzado, cancelado o error) | Melodía **descendente** de 3 notas | 1760 → 1320 → 880 Hz |
+| **Activación rechazada** (pH ≤ umbral o sonda inválida) | **Dos tonos graves** | 300 Hz × 2 |
+
+> ⚠️ El piezo suena mucho más fuerte hacia 2.5–4 kHz. En un ambiente ruidoso, como el gimnasio, conviene subir las melodías a ese rango.
+
+**Dashboards:**
+
+| Indicador | Blynk | Dashboard local |
+|---|---|---|
+| pH con su color | Indicador V0 (el color lo cambia el firmware) | Número grande sobre el color del indicador universal y escala 0–14 con marcadores |
+| Bomba | LED V5 (encendido = pulso activo) | Punto animado mientras bombea; franja sombreada en la gráfica |
+| Estado | Etiqueta V3: REPOSO / DOSIFICANDO / MEZCLANDO | Igual |
+| Resultado | Etiqueta V8, con el error respecto al umbral | Tarjeta "Última dosificación": verde si el error es ±0.1, ámbar si es mayor, rojo si quedó por debajo del umbral |
+
 ### 5.7 Blynk.Cloud
 **Plantilla y región:** `BomACER` (`TMPL2XEggRshL`), región NY3, dispositivo **BomACER**. El token está en `sketches/control_ph/secrets.h`, que está **excluido de git**.
 
@@ -206,6 +252,34 @@ Arduino, core esp32 4.0.0. Ocupa el 33 % de la flash y el 15 % de la RAM.
 - **Solución adoptada:** **OTA por HTTP**. El ESP32 recibe el firmware en `POST /update`, con autenticación básica. Funciona desde la terminal (`./subir_wifi.sh`) y desde el navegador del celular.
 - **Resultado:** 1 MB en **7 segundos**, con reinicio verificado.
 
+### 5.9 Dashboard propio (servido por el ESP32, sin Internet)
+- **Acceso:** Wi-Fi `ARCE-prueba` → **http://192.168.4.1**. La página anterior, más sencilla, sigue en `/simple`.
+- **Tecnología:** HTML, CSS y JS sin librerías (`sketches/control_ph/web_ui.h`, 14.8 KB). Consulta `/api/estado` cada 1 s.
+- **Contenido:**
+  - pH grande con el color universal y escala 0–14;
+  - **gráfica de 5 min** con la línea del umbral y los pulsos de la bomba sombreados;
+  - tarjetas de mL, pulsos, ganancia y consumo;
+  - estado del Wi-Fi y de Blynk;
+  - botones **Iniciar / Detener** y campo de **umbral**;
+  - tarjeta **"Última dosificación"** (pH inicial y final, **error**, mL, pulsos y duración);
+  - panel de **pruebas**.
+- **Diseño:** pensado primero para el celular, con modo claro u oscuro automático y aviso de "sin conexión".
+- **API JSON:** `GET /api/estado` devuelve pH, ADC, voltaje, umbral, estado, bomba, mL de la sesión, pulsos, ganancia, consumo total, mensaje, color, Wi-Fi, Blynk, tiempo encendido y `ultima_sesion` (pH inicial y final, umbral, error, mL, pulsos, duración, motivo y éxito).
+
+### 5.10 Rutas de prueba y diagnóstico (solo en REPOSO)
+| Ruta | Qué hace |
+|---|---|
+| `/test?sonido=inicio\|fin\|rechazo` | Toca la melodía indicada |
+| `/test?colores=1` | El LED recorre el indicador universal, de pH 0 a 14, en 15 s |
+| `/test?rele=100` | Un pulso del relevador (50–200 ms) · ⚠️ enciende la bomba |
+| `/test?cebar=300` | Llena la manguera (50–1000 ms) · ⚠️ enciende la bomba |
+| `/diag` | Lee de vuelta los registros del LED (XN03) y del buzzer (XN44) |
+| `/diag?rgb=R,G,B[,S]&modo=a\|b\|c` | Escribe en el LED con 3 formatos y lo lee de vuelta |
+| `/diag?tono=HZ,MS&modo=a\|b` | Escribe un tono (MSB o LSB primero) y lo lee de vuelta |
+
+### 5.11 Fiabilidad de la actualización por Wi-Fi
+En modo AP + STA, el **ahorro de energía del Wi-Fi** ralentizaba la red propia: la subida tardaba unos 24 s y a veces se cortaba (*Empty reply*). Con `WiFi.setSleep(false)` y la **conexión al Wi-Fi del evento en pausa durante la OTA**, la subida baja a **12 s a la primera**.
+
 ---
 
 ## 6. Pruebas realizadas y resultados (19 nov 2026)
@@ -223,6 +297,12 @@ Arduino, core esp32 4.0.0. Ocupa el 33 % de la flash y el 15 % de la RAM.
 | 12:00 | OTA por HTTP | ✅ 7 s, con autenticación (401 sin clave) |
 | 12:20 | Indicador universal | ✅ LED verde (`#0ACA00`) a pH 6.96 |
 | 12:40 | Blynk | ✅ Dispositivo Online en 10 s; V0 = 6.95, V3 = REPOSO, V7 = verde |
+| 13:30 | Dashboard propio + `/api/estado` | ✅ En la placa · JSON con datos en vivo |
+| 13:32 | **Rechazo (requisito 3.1)** desde la API de Blynk (umbral 7, pH 6.92) | ✅ Rechazado: V2 volvió a 0, la bomba siguió apagada y V8 mostró "Rechazado: el pH ya está en o por debajo del umbral" |
+| 13:40 | OTA tras la corrección | ✅ 12 s a la primera (antes ~24 s con cortes) |
+| 13:40 | **Diagnóstico del buzzer** (escritura y lectura de vuelta) | ✅ TONE = `03 E8 03 E8` (1000 Hz, 1000 ms) · STAT 0 · ❓ el equipo no lo oyó |
+| 13:40 | **Diagnóstico del LED RGB** | ✅ R/G/B guardados correctamente en 0x01–0x03 · ❓ el equipo no vio el recorrido de colores |
+| 13:43 | Bomba | ⚠️ **El equipo informa que la bomba no se apaga**, mientras el firmware está en REPOSO con el relevador en apagado → sospecha de cableado en **NC en lugar de NA**, conexión directa, o relevador defectuoso (sus lecturas devuelven 0xFF) |
 | Pendiente | **Dosificación con agua real** | ⏳ |
 | Pendiente | Medir la solución de pH 4 (segundo punto de calibración) | ⏳ |
 
@@ -317,7 +397,9 @@ Arduino, core esp32 4.0.0. Ocupa el 33 % de la flash y el 15 % de la RAM.
 
 - [ ] **Prueba de dosificación con agua real**, con umbral 6.5 → anotar el pH final y el error.
 - [ ] Medir la **solución de pH 4** para confirmar la pendiente (ADC ≈767 esperado).
-- [ ] Confirmar que se oyen las **dos melodías** del XN44.
+- [ ] **Bomba que no se apaga:** revisar el cableado del XN13 (debe ir **COM + NA**, no NC) y su LED. Cambiar el módulo si está pegado.
+- [ ] Confirmar **físicamente** las melodías (subir a 2.5–4 kHz si no se oyen) y los colores del LED (subir el brillo).
+- [ ] Confirmar que el **interruptor Dosificar** de Blynk arranca la dosificación con umbral < pH.
 - [ ] Panel de **Blynk en la app** del celular.
 - [ ] (Opcional) Eventos de Blynk, botón de emergencia, métricas de precisión.
 
