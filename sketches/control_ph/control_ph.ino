@@ -532,6 +532,55 @@ void apiEstado() {
 uint32_t inicioTestColores = 0;            // 0 = sin prueba de colores
 String ultimoTest = "";
 
+// ---------------- Diagnóstico de LED y buzzer (lee de vuelta lo que guardan los módulos) ----------------
+//   /diag                         lee registros de XN03 (RGB, STAT) y XN44 (TONE, INT, STAT)
+//   /diag?rgb=R,G,B[,S]&modo=a|b|c   a: 3 bytes en 0x01 · b: 4 bytes en 0x01 (S = escala) · c: 1 byte en 0x01, 0x02, 0x03
+//   /diag?tono=HZ,MS&modo=a|b        a: MSB primero (actual) · b: LSB primero
+uint32_t diagLedHasta = 0;            // mientras tanto no se sobreescribe el LED con el color del pH
+
+String hexBytes(const uint8_t* b, size_t n, bool ok) {
+  if (!ok) return "ERROR";
+  String o; for (size_t i = 0; i < n; i++) { char t[4]; snprintf(t, sizeof(t), "%02X ", b[i]); o += t; }
+  o.trim(); return o;
+}
+void paginaDiag() {
+  String r;
+  if (estado != 0) { server.send(200, "text/plain", "RECHAZADO: dosificacion en curso\n"); return; }
+  String modo = server.hasArg("modo") ? server.arg("modo") : "a";
+  if (server.hasArg("rgb")) {
+    int v[4] = {0, 0, 0, 100}; String a = server.arg("rgb"); int k = 0, ini = 0;
+    for (int i = 0; i <= (int)a.length() && k < 4; i++) if (i == (int)a.length() || a[i] == ',') { v[k++] = a.substring(ini, i).toInt(); ini = i + 1; }
+    uint8_t d[4] = { uint8_t(v[0]), uint8_t(v[1]), uint8_t(v[2]), uint8_t(v[3]) };
+    bool ok;
+    if (modo == "b") ok = xnWrite(ADDR_XN03, 0x01, d, 4);
+    else if (modo == "c") ok = xnWrite(ADDR_XN03, 0x01, &d[0], 1) & xnWrite(ADDR_XN03, 0x02, &d[1], 1) & xnWrite(ADDR_XN03, 0x03, &d[2], 1);
+    else ok = xnWrite(ADDR_XN03, 0x01, d, 3);
+    diagLedHasta = millis() + 8000;
+    r += "RGB modo " + modo + " (" + a + ") escritura=" + (ok ? "OK" : "FALLO") + "\n";
+  }
+  if (server.hasArg("tono")) {
+    String a = server.arg("tono"); int c = a.indexOf(',');
+    uint16_t hz = a.substring(0, c).toInt(), ms = c > 0 ? a.substring(c + 1).toInt() : 500;
+    uint8_t d[4];
+    if (modo == "b") { d[0] = uint8_t(hz); d[1] = uint8_t(hz >> 8); d[2] = uint8_t(ms); d[3] = uint8_t(ms >> 8); }
+    else { d[0] = uint8_t(hz >> 8); d[1] = uint8_t(hz); d[2] = uint8_t(ms >> 8); d[3] = uint8_t(ms); }
+    bool ok = xnWrite(ADDR_XN44, 0x01, d, 4);
+    r += "TONO modo " + modo + " " + String(hz) + " Hz " + String(ms) + " ms escritura=" + (ok ? "OK" : "FALLO") + "\n";
+    delay(20);
+  }
+  uint8_t b4[4], b1[1]; bool ok;
+  ok = xnRead(ADDR_XN03, 0x01, b4, 4); r += "XN03 reg 0x01 (4B): " + hexBytes(b4, 4, ok) + "\n";
+  ok = xnRead(ADDR_XN03, 0x02, b1, 1); r += "XN03 reg 0x02: " + hexBytes(b1, 1, ok) + "\n";
+  ok = xnRead(ADDR_XN03, 0x03, b1, 1); r += "XN03 reg 0x03: " + hexBytes(b1, 1, ok) + "\n";
+  ok = xnRead(ADDR_XN03, 0x37, b1, 1); r += "XN03 STAT: " + hexBytes(b1, 1, ok) + "\n";
+  ok = xnRead(ADDR_XN44, 0x01, b4, 4); r += "XN44 TONE (4B): " + hexBytes(b4, 4, ok) + "\n";
+  ok = xnRead(ADDR_XN44, 0x10, b1, 1); r += "XN44 INT: " + hexBytes(b1, 1, ok) + "\n";
+  ok = xnRead(ADDR_XN44, 0x37, b1, 1); r += "XN44 STAT: " + hexBytes(b1, 1, ok) + "\n";
+  r += "LED calculado: " + String(colR) + "," + String(colG) + "," + String(colB) + " (LED_MAX=" + String(LED_MAX) + ")\n";
+  Serial.print(r);
+  server.send(200, "text/plain; charset=utf-8", r);
+}
+
 void paginaTest() {
   String r;
   if (estado != 0) { r = "RECHAZADO: hay una dosificacion en curso"; }
@@ -641,6 +690,7 @@ void setup() {
   server.on("/simple", paginaEstado);       // página sencilla anterior (respaldo)
   server.on("/cmd", paginaCmd);
   server.on("/test", paginaTest);
+  server.on("/diag", paginaDiag);
   server.on("/update", HTTP_GET, paginaUpdateForm);
   server.on("/update", HTTP_POST, paginaUpdateFin, paginaUpdateDatos);
   server.begin();
@@ -660,7 +710,7 @@ void loop() {
     else { inicioTestColores = 0; colorDePh(ph); }
   }
   if (ahora - tHist >= 1000)   { tHist = ahora; guardarHistorial(); }
-  if (ahora - tLed >= 500)     { tLed = ahora; actualizarLed(); }
+  if (ahora - tLed >= 500 && (int32_t)(ahora - diagLedHasta) >= 0) { tLed = ahora; actualizarLed(); }
 
   actualizarControl();
   actualizarMelodia();
