@@ -581,6 +581,9 @@ void paginaUpdateFin() {
   if (!server.authenticate(OTA_USER, AP_PASS)) return server.requestAuthentication();
   bool ok = !otaError && !Update.hasError();
   server.send(ok ? 200 : 500, "text/plain", ok ? "OK, reiniciando\n" : "ERROR en la actualizacion\n");
+#ifdef USE_BLYNK
+  if (!ok) WiFi.begin(WIFI_SSID, WIFI_PASS);   // si falló, reanuda la conexión a Internet
+#endif
   delay(300);
   if (ok) ESP.restart();
 }
@@ -593,6 +596,10 @@ void paginaUpdateDatos() {
     bombaApagar();                                                     // relevador apagado
     uint8_t azul[3] = { 0, 0, LED_MAX }; xnWrite(ADDR_XN03, REG_RGB, azul, 3);
     Serial.printf("# OTA: recibiendo %s\n", up.filename.c_str());
+#ifdef USE_BLYNK
+    Blynk.disconnect();                 // libera la radio para la red propia durante la actualización
+    WiFi.disconnect(false, false);      // solo la estación; la red ARCE-prueba sigue activa
+#endif
     if (!Update.begin(UPDATE_SIZE_UNKNOWN)) otaError = true;
   } else if (up.status == UPLOAD_FILE_WRITE && !otaError) {
     if (Update.write(up.buf, up.currentSize) != up.currentSize) otaError = true;
@@ -601,6 +608,9 @@ void paginaUpdateDatos() {
     Serial.printf("# OTA: %u bytes, %s\n", up.totalSize, otaError ? "ERROR" : "OK");
   } else if (up.status == UPLOAD_FILE_ABORTED) {
     Update.abort(); otaError = true;
+#ifdef USE_BLYNK
+    WiFi.begin(WIFI_SSID, WIFI_PASS);   // reanuda la conexión a Internet
+#endif
   }
 }
 
@@ -621,6 +631,7 @@ void setup() {
   // Red propia (página local + /update) y, con Blynk, también la red con Internet
   WiFi.mode(WIFI_AP_STA);
   WiFi.softAP(AP_SSID, AP_PASS);
+  WiFi.setSleep(false);                 // sin ahorro de energía: la red propia y la OTA van mucho más rápido
 #ifdef USE_BLYNK
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Blynk.config(BLYNK_AUTH_TOKEN);
