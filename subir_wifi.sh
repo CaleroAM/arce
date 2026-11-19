@@ -16,7 +16,11 @@ BIN=$(ls "$BUILD"/*.ino.bin)
 
 PREV=$(nmcli -t -f NAME,TYPE connection show --active | grep wireless | cut -d: -f1 | head -1 || true)
 echo "== Conectando a $AP_SSID (Wi-Fi actual: ${PREV:-ninguna})"
-nmcli device wifi rescan >/dev/null 2>&1 || true; sleep 3
+for i in 1 2 3 4 5; do                       # la red puede tardar en aparecer en el escaneo
+  nmcli device wifi rescan >/dev/null 2>&1 || true; sleep 6
+  nmcli -t -f SSID device wifi list | grep -qx "$AP_SSID" && break
+  echo "   (buscando $AP_SSID, intento $i/5)"
+done
 nmcli device wifi connect "$AP_SSID" password "$AP_PASS" >/dev/null
 sleep 3
 
