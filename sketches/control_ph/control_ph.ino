@@ -35,6 +35,7 @@
 #include <WebServer.h>
 #include <Update.h>
 #include <math.h>
+#include "web_ui.h"                 // dashboard propio (HTML/CSS/JS inline, sin Internet)
 
 // Red propia del ESP32 (siempre activa, aunque no haya Internet):
 //   estado en http://192.168.4.1  ·  actualizar firmware en http://192.168.4.1/update (arce / arce2026)
@@ -267,13 +268,29 @@ void blynkEvento(const char* codigo, const String& msg) { if (Blynk.connected())
 void blynkEvento(const char*, const String&) {}
 #endif
 
+// Métricas de la última dosificación (para el dashboard local y Blynk V8)
+bool sesValida = false, sesExito = false;
+float sesPhIni = NAN, sesPhFin = NAN, sesUmbral = NAN, sesError = NAN, sesMl = 0;
+uint8_t sesPulsos = 0;
+uint32_t sesInicioMs = 0, sesDuracionS = 0;
+String sesMotivo = "";
+
 void finalizar(const String& motivo, bool exito) {
   bombaApagar();
   estado = 0;
   tocar(1);
-  char buf[96];
-  snprintf(buf, sizeof(buf), "%s. pH=%.2f umbral=%.2f pulsos=%u dosis=%.1f mL",
-           motivo.c_str(), ph, umbral, nPulsos, bombaTotalMs * CAUDAL_ML_S / 1000.0f);
+  float umb = isnan(sesUmbral) ? umbral : sesUmbral;
+  sesPhFin = ph;
+  sesError = isnan(ph) ? NAN : ph - umb;
+  sesMl = bombaTotalMs * CAUDAL_ML_S / 1000.0f;
+  sesPulsos = nPulsos;
+  sesDuracionS = sesInicioMs ? (millis() - sesInicioMs) / 1000 : 0;
+  sesMotivo = motivo;
+  sesExito = exito;
+  sesValida = true;
+  char buf[128];
+  snprintf(buf, sizeof(buf), "%s. pH=%.2f umbral=%.2f error=%+.2f pulsos=%u dosis=%.1f mL",
+           motivo.c_str(), ph, umb, sesError, nPulsos, sesMl);
   notificar(buf);
   blynkEvento(exito ? "dosificacion_fin" : "dosificacion_error", buf);
 #ifdef USE_BLYNK
@@ -324,6 +341,7 @@ void solicitarInicio() {
     return;
   }
   bombaTotalMs = 0; nPulsos = 0; pulsosSinEfecto = 0;
+  sesPhIni = ph; sesUmbral = umbral; sesInicioMs = millis();   // métricas de la sesión
   // La ganancia aprendida se conserva entre sesiones (misma agua/solución)
   tocar(0);
   notificar("Dosificacion iniciada: pH " + String(ph, 2) + " -> " + String(umbral, 2));
@@ -445,6 +463,67 @@ void paginaEstado() {
   server.send(200, "text/html; charset=utf-8", h);
 }
 
+// ---------------- Dashboard propio (web_ui.h) + API JSON ----------------
+String jsonNum(float v, int dec) { return (isnan(v) || isinf(v)) ? String("null") : String(v, dec); }
+String jsonStr(const String& s) {
+  String o; o.reserve(s.length() + 8); o += '"';
+  for (size_t i = 0; i < s.length(); i++) {
+    char c = s[i];
+    if (c == '"' || c == '\\') { o += '\\'; o += c; }
+    else if ((uint8_t)c < 0x20) { char b[8]; snprintf(b, sizeof(b), "\\u%04x", (uint8_t)c); o += b; }
+    else o += c;
+  }
+  o += '"'; return o;
+}
+
+void paginaDashboard() {
+  server.sendHeader("Cache-Control", "no-cache");
+  server.send_P(200, "text/html; charset=utf-8", INDEX_HTML);
+}
+
+void apiEstado() {
+  char hex[8]; snprintf(hex, sizeof(hex), "#%02X%02X%02X", colR, colG, colB);
+  bool sta = WiFi.status() == WL_CONNECTED;
+#ifdef USE_BLYNK
+  bool nube = Blynk.connected();
+#else
+  bool nube = false;
+#endif
+  String j; j.reserve(900);
+  j += "{\"ph\":";            j += jsonNum(ph, 2);
+  j += ",\"adc\":";           j += jsonNum(adcFiltrado, 1);
+  j += ",\"voltaje\":";       j += jsonNum(voltaje, 3);
+  j += ",\"umbral\":";        j += jsonNum(umbral, 2);
+  j += ",\"estado\":";        j += jsonStr(NOMBRE_ESTADO[estado]);
+  j += ",\"bomba\":";         j += bombaOn ? "true" : "false";
+  j += ",\"dosis_ml\":";      j += jsonNum(bombaTotalMs * CAUDAL_ML_S / 1000.0f, 1);
+  j += ",\"pulsos\":";        j += String(nPulsos);
+  j += ",\"ganancia\":";      j += jsonNum(ganancia, 6);
+  j += ",\"consumo_total_ml\":"; j += jsonNum(bombaHistoricoMs * CAUDAL_ML_S / 1000.0f, 1);
+  j += ",\"mensaje\":";       j += jsonStr(ultimoMensaje);
+  j += ",\"color\":";         j += jsonStr(hex);
+  j += ",\"wifi_sta\":";      j += sta ? "true" : "false";
+  j += ",\"blynk\":";         j += nube ? "true" : "false";
+  j += ",\"uptime_s\":";      j += String(millis() / 1000);
+  j += ",\"ultima_sesion\":";
+  if (!sesValida) j += "null";
+  else {
+    j += "{\"ph_inicial\":";  j += jsonNum(sesPhIni, 2);
+    j += ",\"ph_final\":";    j += jsonNum(sesPhFin, 2);
+    j += ",\"umbral\":";      j += jsonNum(sesUmbral, 2);
+    j += ",\"error\":";       j += jsonNum(sesError, 2);
+    j += ",\"ml\":";          j += jsonNum(sesMl, 1);
+    j += ",\"pulsos\":";      j += String(sesPulsos);
+    j += ",\"duracion_s\":";  j += String(sesDuracionS);
+    j += ",\"motivo\":";      j += jsonStr(sesMotivo);
+    j += ",\"exito\":";       j += sesExito ? "true" : "false";
+    j += "}";
+  }
+  j += "}";
+  server.sendHeader("Cache-Control", "no-store");
+  server.send(200, "application/json", j);
+}
+
 // ---------------- Pruebas de funciones (solo en REPOSO) ----------------
 //   /test?sonido=inicio|fin|rechazo     melodías del XN44
 //   /test?colores=1                     recorre el indicador universal pH 0→14 en ~15 s
@@ -546,7 +625,9 @@ void setup() {
   WiFi.begin(WIFI_SSID, WIFI_PASS);
   Blynk.config(BLYNK_AUTH_TOKEN);
 #endif
-  server.on("/", paginaEstado);
+  server.on("/", paginaDashboard);          // dashboard propio (web_ui.h)
+  server.on("/api/estado", apiEstado);
+  server.on("/simple", paginaEstado);       // página sencilla anterior (respaldo)
   server.on("/cmd", paginaCmd);
   server.on("/test", paginaTest);
   server.on("/update", HTTP_GET, paginaUpdateForm);
