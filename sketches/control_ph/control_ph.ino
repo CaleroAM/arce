@@ -445,6 +445,37 @@ void paginaEstado() {
   server.send(200, "text/html; charset=utf-8", h);
 }
 
+// ---------------- Pruebas de funciones (solo en REPOSO) ----------------
+//   /test?sonido=inicio|fin|rechazo     melodías del XN44
+//   /test?colores=1                     recorre el indicador universal pH 0→14 en ~15 s
+//   /test?rele=MS                       un pulso del relevador (50–200 ms)
+//   /test?cebar=MS                      llena la manguera (50–1000 ms)
+uint32_t inicioTestColores = 0;            // 0 = sin prueba de colores
+String ultimoTest = "";
+
+void paginaTest() {
+  String r;
+  if (estado != 0) { r = "RECHAZADO: hay una dosificacion en curso"; }
+  else if (server.hasArg("sonido")) {
+    String s = server.arg("sonido");
+    if (s == "inicio") tocar(0); else if (s == "fin") tocar(1); else tocar(2);
+    r = "Sonido: " + s;
+  } else if (server.hasArg("colores")) {
+    inicioTestColores = millis(); if (!inicioTestColores) inicioTestColores = 1;
+    r = "Recorriendo colores pH 0 a 14 (15 s)";
+  } else if (server.hasArg("rele") || server.hasArg("cebar")) {
+    bool cebar = server.hasArg("cebar");
+    uint32_t ms = constrain(server.arg(cebar ? "cebar" : "rele").toInt(), 50, cebar ? 1000 : 200);
+    bombaPulso(ms); delay(ms); bombaApagar();
+    r = String(cebar ? "Cebado " : "Pulso de relevador ") + ms + " ms (" + String(ms * CAUDAL_ML_S / 1000.0f, 1) + " mL)";
+  } else {
+    r = "Uso: /test?sonido=inicio|fin|rechazo · /test?colores=1 · /test?rele=100 · /test?cebar=300";
+  }
+  ultimoTest = r;
+  Serial.println("# TEST: " + r);
+  server.send(200, "text/plain; charset=utf-8", r + "\n");
+}
+
 void paginaCmd() {
   if (server.hasArg("c")) {
     if (server.arg("c") == "start") solicitarInicio();
@@ -517,6 +548,7 @@ void setup() {
 #endif
   server.on("/", paginaEstado);
   server.on("/cmd", paginaCmd);
+  server.on("/test", paginaTest);
   server.on("/update", HTTP_GET, paginaUpdateForm);
   server.on("/update", HTTP_POST, paginaUpdateFin, paginaUpdateDatos);
   server.begin();
@@ -529,7 +561,12 @@ void loop() {
   static uint32_t tMuestra = 0, tPh = 0, tHist = 0, tLed = 0, tLog = 0, tRele = 0;
 
   if (ahora - tMuestra >= 20)  { tMuestra = ahora; muestrear(); }
-  if (ahora - tPh >= 250)      { tPh = ahora; calcularPh(); colorDePh(ph); }
+  if (ahora - tPh >= 250) {
+    tPh = ahora; calcularPh();
+    if (inicioTestColores && ahora - inicioTestColores < 15000 && estado == 0)
+      colorDePh((ahora - inicioTestColores) * 14.0f / 15000.0f);   // prueba: recorre pH 0→14
+    else { inicioTestColores = 0; colorDePh(ph); }
+  }
   if (ahora - tHist >= 1000)   { tHist = ahora; guardarHistorial(); }
   if (ahora - tLed >= 500)     { tLed = ahora; actualizarLed(); }
 
