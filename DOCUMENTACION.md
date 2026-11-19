@@ -270,7 +270,9 @@ Entre dos valores enteros el color se interpola, por ejemplo 6.5 es amarillo ver
 - **URL pública:** **https://acer.tail2b1858.ts.net:8443**. Cualquiera puede abrirla desde cualquier red, sin instalar nada.
 - **Funcionamiento:** ESP32 → Blynk.Cloud → `remoto/puente_blynk.py` en la portátil (127.0.0.1:8090) → Tailscale Funnel (HTTPS).
 - **Mismo dashboard** que el del ESP32, con datos de Blynk cada ~2 s (una sola petición por ciclo, compartida por todos los visitantes).
-- **Solo lectura:** se ocultan los paneles de Control, Módulos y Pruebas, y `/cmd`, `/test`, `/diag` y `/update` responden 403. Nadie de fuera puede encender la bomba. El token de Blynk se queda en la portátil.
+- **Controles con PIN:** los botones **Iniciar / Detener** y el **umbral** piden el PIN del equipo (una vez por sesión del navegador). El PIN viaja en la cabecera `X-Pin` de un `POST`, nunca en la URL. Tras **5 fallos**, los controles se bloquean **2 min**. El puente envía la orden a Blynk (V2 = dosificar, V1 = umbral), y el ESP32 aplica **las mismas protecciones** (rechazo si pH ≤ umbral, límites de solución, etc.).
+- **El PIN** está en `remoto/.pin` (se genera al azar en el primer arranque, fuera de git) o en la variable `ARCE_PIN`. Para verlo: `cat remoto/.pin`.
+- **Siguen ocultos** los paneles de Módulos y Pruebas (no hay canal de Blynk para ellos), y `GET /cmd`, `/test`, `/diag` y `/update` responden 403. El token de Blynk se queda en la portátil.
 - **Limitaciones:**
   - depende de que la portátil esté encendida, con Internet y con el puente en marcha;
   - mientras la portátil se conecta a `ARCE-prueba` para subir firmware (~1 min), la vista remota se corta;
