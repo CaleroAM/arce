@@ -537,6 +537,10 @@ String ultimoTest = "";
 //   /diag?rgb=R,G,B[,S]&modo=a|b|c   a: 3 bytes en 0x01 · b: 4 bytes en 0x01 (S = escala) · c: 1 byte en 0x01, 0x02, 0x03
 //   /diag?tono=HZ,MS&modo=a|b        a: MSB primero (actual) · b: LSB primero
 uint32_t diagLedHasta = 0;            // mientras tanto no se sobreescribe el LED con el color del pH
+uint32_t diagReleHasta = 0;           // mientras tanto no se repite el "apagado" periódico del relevador
+bool serial2Iniciado = false;
+//   /diag?uart=XN13A+V               envía un comando UART (115200, RX=9 TX=10) y devuelve la respuesta
+//   /diag?rele_raw=00 | 01,00 | ...  escribe bytes crudos al XN13 (0x0D) sin registro
 
 String hexBytes(const uint8_t* b, size_t n, bool ok) {
   if (!ok) return "ERROR";
@@ -567,6 +571,24 @@ void paginaDiag() {
     bool ok = xnWrite(ADDR_XN44, 0x01, d, 4);
     r += "TONO modo " + modo + " " + String(hz) + " Hz " + String(ms) + " ms escritura=" + (ok ? "OK" : "FALLO") + "\n";
     delay(20);
+  }
+  if (server.hasArg("uart")) {
+    if (!serial2Iniciado) { Serial2.begin(115200, SERIAL_8N1, 9, 10); serial2Iniciado = true; delay(20); }
+    while (Serial2.available()) Serial2.read();
+    String cmd = server.arg("uart");
+    Serial2.print(cmd); Serial2.print("\r\n");
+    String resp; uint32_t t0 = millis();
+    while (millis() - t0 < 400) { while (Serial2.available()) resp += (char)Serial2.read(); delay(5); }
+    resp.replace("\r", "\\r"); resp.replace("\n", "\\n");
+    r += "UART -> " + cmd + "\nUART <- " + (resp.length() ? resp : String("(sin respuesta)")) + "\n";
+    diagReleHasta = millis() + 20000;
+  }
+  if (server.hasArg("rele_raw")) {
+    String a = server.arg("rele_raw"); uint8_t d[8]; uint8_t n = 0; int ini = 0;
+    for (int i = 0; i <= (int)a.length() && n < 8; i++) if (i == (int)a.length() || a[i] == ',') { d[n++] = strtol(a.substring(ini, i).c_str(), nullptr, 16); ini = i + 1; }
+    Wire.beginTransmission(ADDR_XN13); Wire.write(d, n); uint8_t e = Wire.endTransmission();
+    r += "XN13 bytes crudos [" + a + "] endTransmission=" + String(e) + (e == 0 ? " (OK)" : " (FALLO)") + "\n";
+    diagReleHasta = millis() + 20000;
   }
   uint8_t b4[4], b1[1]; bool ok;
   ok = xnRead(ADDR_XN03, 0x01, b4, 4); r += "XN03 reg 0x01 (4B): " + hexBytes(b4, 4, ok) + "\n";
@@ -717,7 +739,7 @@ void loop() {
   server.handleClient();
 
   // Seguridad: si no estamos en un pulso, el relevador debe estar apagado
-  if (estado != 1 && ahora - tRele >= 2000) { tRele = ahora; setRele(false); }
+  if (estado != 1 && ahora - tRele >= 2000 && (int32_t)(ahora - diagReleHasta) >= 0) { tRele = ahora; setRele(false); }
   if ((bombaOn && estado != 1) || releApagadoPendiente) bombaApagar();
 
   // Botón BOOT: inicia / detiene
