@@ -83,6 +83,8 @@ footer a{color:var(--mu)}
 <section class="c span"><h2>Indicadores</h2><div class="kp">
 <div class="k"><small>Dosis de la sesión</small><b id="kMl">--</b></div>
 <div class="k"><small>Pulsos</small><b id="kPu">--</b></div>
+<div class="k"><small>Último pulso de bomba</small><b id="kUlt">--</b></div>
+<div class="k"><small>Activaciones totales</small><b id="kAct">--</b></div>
 <div class="k"><small>Ganancia (pH/s de bomba)</small><b id="kGa">--</b></div>
 <div class="k"><small>Consumo total</small><b id="kCo">--</b></div>
 <div class="k"><small>Sonda (ADC)</small><b id="kAdc">--</b></div>
@@ -117,6 +119,7 @@ function render(d){
  $("ph").textContent=f(d.ph,2);$("estado").textContent=d.estado||"--";$("umb").textContent=f(d.umbral,2);
  $("msg").textContent=d.mensaje||"";
  $("dot").className="dot"+(d.bomba?" on":"");$("bomba").textContent=d.bomba?"Bomba ENCENDIDA":"Bomba apagada";
+ $("kUlt").textContent=(d.ultimo_pulso_hace_s===null||d.ultimo_pulso_hace_s===undefined)?"ninguno":d.ultimo_pulso_ms+" ms · hace "+dur(d.ultimo_pulso_hace_s);$("kAct").textContent=d.activaciones!==undefined?d.activaciones:"--";
  if(d.ph!==null){$("mkPh").style.display="";$("mkPh").style.left=pct(d.ph);$("mkPhT").textContent="pH "+f(d.ph,2)}else $("mkPh").style.display="none";
  $("mkUm").style.left=pct(d.umbral);$("mkUmT").textContent="umbral "+f(d.umbral,1);
  $("kMl").textContent=f(d.dosis_ml,1)+" mL";$("kPu").textContent=d.pulsos;

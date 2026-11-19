@@ -152,13 +152,19 @@ void bombaPulso(uint32_t ms) {
   bombaApagarEn = bombaInicio + ms;
   digitalWrite(BOARD_LED, HIGH);
 }
-bool releApagadoPendiente = false;   // si falla el I2C al apagar, se reintenta en cada loop
+bool releApagadoPendiente = false;   // si falla el apagado, se reintenta cada 500 ms
+// Indicador visible: los pulsos duran 0.1–0.6 s y los dashboards refrescan cada 1 s,
+// así que el indicador de bomba se mantiene encendido 2 s tras cada pulso.
+const uint32_t BOMBA_INDICADOR_MS = 2000;
+uint32_t ultimoPulsoFinMs = 0, ultimoPulsoDuracionMs = 0, activacionesTotales = 0;
+bool bombaIndicador() { return bombaOn || (ultimoPulsoFinMs && millis() - ultimoPulsoFinMs < BOMBA_INDICADOR_MS); }
 void bombaApagar() {
   if (bombaOn) {
     uint32_t real = millis() - bombaInicio;
     bombaTotalMs += real;
     bombaHistoricoMs += real;
     bombaOn = false;
+    ultimoPulsoFinMs = millis(); ultimoPulsoDuracionMs = real; activacionesTotales++;
   }
   releApagadoPendiente = !setRele(false);
   if (releApagadoPendiente) Serial.println("# ERROR: no se pudo apagar el relevador, reintentando");
@@ -449,7 +455,7 @@ void enviarBlynk() {
   Blynk.setProperty(V0, "color", hex);
   Blynk.virtualWrite(V3, NOMBRE_ESTADO[estado]);
   Blynk.virtualWrite(V4, voltaje);
-  Blynk.virtualWrite(V5, bombaOn ? 1 : 0);
+  Blynk.virtualWrite(V5, bombaIndicador() ? 1 : 0);
   Blynk.virtualWrite(V6, bombaTotalMs * CAUDAL_ML_S / 1000.0f);
   Blynk.virtualWrite(V7, hex);
   Blynk.virtualWrite(V8, ultimoMensaje);
@@ -528,7 +534,11 @@ void apiEstado() {
   j += ",\"voltaje\":";       j += jsonNum(voltaje, 3);
   j += ",\"umbral\":";        j += jsonNum(umbral, 2);
   j += ",\"estado\":";        j += jsonStr(NOMBRE_ESTADO[estado]);
-  j += ",\"bomba\":";         j += bombaOn ? "true" : "false";
+  j += ",\"bomba\":";         j += bombaIndicador() ? "true" : "false";
+  j += ",\"bomba_real\":";    j += bombaOn ? "true" : "false";
+  j += ",\"ultimo_pulso_ms\":"; j += String(ultimoPulsoDuracionMs);
+  j += ",\"ultimo_pulso_hace_s\":"; j += ultimoPulsoFinMs ? String((millis() - ultimoPulsoFinMs) / 1000) : String("null");
+  j += ",\"activaciones\":";  j += String(activacionesTotales);
   j += ",\"dosis_ml\":";      j += jsonNum(bombaTotalMs * CAUDAL_ML_S / 1000.0f, 1);
   j += ",\"pulsos\":";        j += String(nPulsos);
   j += ",\"ganancia\":";      j += jsonNum(ganancia, 6);
